@@ -4,6 +4,7 @@
 	import { nodeKey, useBoard } from '../ui/board.svelte.ts';
 	import { childrenOf, formatElapsed, stateOf, subtreeStates } from '../ui/dashboard.ts';
 	import AgentChip from './AgentChip.svelte';
+	import ImageStrip from './ImageStrip.svelte';
 	import Links from './Links.svelte';
 	import NodeTree from './NodeTree.svelte';
 	import StateMark from './StateMark.svelte';
@@ -53,6 +54,7 @@
 						<div class="meta"><AgentChip agent={node.agent} /><Links links={node.links} /></div>
 					{/if}
 					{#if node.note}<p class="note">{node.note}</p>{/if}
+					<ImageStrip images={board.imagesOf(taskId, node.path)} />
 					{#if history}
 						{@const timeline = board.timelines.get(key)}
 						{#if timeline}

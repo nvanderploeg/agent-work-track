@@ -8,6 +8,7 @@ export interface DashboardState {
 	tasks: Task[]; // createdAt desc, id desc on ties
 	nodes: Node[];
 	notices: Notice[];
+	images: Image[];
 	lastSeq: number;
 }
 
@@ -24,6 +25,7 @@ export function subtreeStates(nodes: Node[], taskId: string, path: string): stri
 export type NoticeStatus = 'unread' | 'approved' | 'flagged'; // kept per browser in localStorage
 export function noticesOf(notices: Notice[], taskId: string): Notice[];
 export function needsReview(status: NoticeStatus): boolean;
+export function imagesOf(images: Image[], taskId: string, path: string | null): Image[];
 export function justFinished(prev: Task | undefined, next: Task, config: ProjectConfig): boolean;
 export function allSettled(tasks: Task[], config: ProjectConfig): boolean;
 export function formatElapsed(fromIso: string, now: number): string;
@@ -39,6 +41,8 @@ export function stepProgress(nodes: Node[], taskId: string, config: ProjectConfi
 - **childrenOf** — nodes of that task whose `parentPath` equals `parentPath` (`null` = steps), sorted by `position` asc, then `path` asc.
 - **subtreeStates** — `state` of every descendant of `path` in that task (not the node itself), in `depth` asc, then `position` asc, then `path` asc order.
 - **applyEvent, notice** — a `notice` event appends its `Notice` unless one with that `id` is already present.
+- **applyEvent, image** — an `image` event appends its `Image` unless one with that `id` is already present.
+- **imagesOf** — the images of that task attached at `path` (`null` = the task itself), in input order.
 - **noticesOf** — the notices of that task, in input order.
 - **needsReview** — false for `approved`, true otherwise. A task shows its alert while any of its notices needs review.
 - **justFinished** — true when `next`'s kind is `done` and `prev` is undefined-or-not-done. Used to trigger the green flash; a task first seen already done (on page load) is handled by the caller passing `prev` = the same task, so it returns false.
@@ -56,3 +60,8 @@ export function taskMarkdown(task: Task, nodes: Node[], notices: Notice[], confi
 
 - **tokensByModel** — tokens of the tasks' `agent` and of their nodes' `agent`, summed per `agent.model` (`'unknown'` when absent), largest first; ties by model name. Nodes of tasks not in `tasks` and agents without tokens are ignored.
 - **taskMarkdown** — a task as markdown for pasting: a facts line (state, steps done, runtime, agent, tokens), summary, note, nested Steps with state and note, the task's Notices, Links and PRs. Empty sections are omitted.
+
+## Images on the board
+
+A Task card shows its task-level Images, and each Node row its own, as a strip of 256 px thumbnails (`/api/images/<id>/thumb.jpg`) drawn small. A `review` Image has an accent ring and a `review` mark. Clicking one opens a single lightbox (`<dialog>`, Esc or backdrop closes) with `full.jpg` for a `review` Image, else `thumb.jpg`, and the caption. An Image whose request fails is marked expired in the `Board` (`expired`), so every strip and the lightbox show it as expired from then on; the browser cache keeps whatever it already loaded.
+

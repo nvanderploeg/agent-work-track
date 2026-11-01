@@ -20,6 +20,9 @@ import {
 } from '../../routes/api/tasks/[taskId]/+server.ts';
 import { GET as getEventsHandler } from '../../routes/api/tasks/[taskId]/events/+server.ts';
 import { POST as postNoticeHandler } from '../../routes/api/tasks/[taskId]/notices/+server.ts';
+import { POST as postImageHandler } from '../../routes/api/tasks/[taskId]/images/+server.ts';
+import { GET as getImageFileHandler } from '../../routes/api/images/[imageId]/[file]/+server.ts';
+import { fakeJpeg } from '#lib/server/test/jpeg.ts';
 import { PUT as putNodeHandler } from '../../routes/api/tasks/[taskId]/nodes/[...path]/+server.ts';
 
 type Body = Record<string, any>;
@@ -156,6 +159,20 @@ const api = {
 				key,
 				params: { taskId }
 			})
+		),
+	postImage: (taskId: string, body: unknown, key?: string) =>
+		postImageHandler(
+			event({
+				method: 'POST',
+				path: `/api/tasks/${taskId}/images`,
+				body,
+				key,
+				params: { taskId }
+			})
+		),
+	getImageFile: (imageId: string, file: string) =>
+		getImageFileHandler(
+			event({ path: `/api/images/${imageId}/${file}`, params: { imageId, file } })
 		),
 	putNode: (taskId: string, path: string, body: unknown, key?: string) =>
 		putNodeHandler(
@@ -1505,6 +1522,113 @@ describe('POST /api/tasks/:taskId/notices', () => {
 		const p = await newProject();
 		const { taskId } = await newTask(p);
 		const res = await api.postNotice(taskId, body, p.writeKey);
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toBe(error);
+	});
+});
+
+describe('images', () => {
+	const thumb = fakeJpeg(256, 144).toString('base64');
+	const full = fakeJpeg(512, 288).toString('base64');
+
+	it('stores a review image, serves both sizes and lists the record', async () => {
+		const p = await newProject();
+		const { taskId } = await newTask(p, { title: 'T', steps: [{ key: 'one' }] });
+
+		const res = await api.postImage(
+			taskId,
+			{ thumb, full, caption: 'Login page', path: 'one' },
+			p.writeKey
+		);
+
+		expect(res.status).toBe(201);
+		const { image } = await res.json();
+		expect(image).toMatchObject({
+			taskId,
+			path: 'one',
+			caption: 'Login page',
+			review: true,
+			width: 512,
+			height: 288
+		});
+		expect(image.id).toMatch(UUID_V4);
+		expect(image.createdAt).toMatch(ISO);
+		expect((await api.getTask(taskId).then((r) => r.json())).images).toEqual([image]);
+		expect((await snapshot(p.id)).images).toEqual([image]);
+
+		const small = await api.getImageFile(image.id, 'thumb.jpg');
+		expect(small.status).toBe(200);
+		expect(small.headers.get('content-type')).toBe('image/jpeg');
+		expect(small.headers.get('cache-control')).toBe('private, max-age=604800, immutable');
+		expect(Buffer.from(await small.arrayBuffer()).toString('base64')).toBe(thumb);
+		const large = await api.getImageFile(image.id, 'full.jpg');
+		expect(Buffer.from(await large.arrayBuffer()).toString('base64')).toBe(full);
+	});
+
+	it('keeps a thumbnail-only image out of review and has no full view', async () => {
+		const p = await newProject();
+		const { taskId } = await newTask(p);
+		const { image } = await (await api.postImage(taskId, { thumb }, p.writeKey)).json();
+
+		expect(image).toMatchObject({ review: false, caption: '', path: null, width: 256 });
+		expect((await api.getImageFile(image.id, 'full.jpg')).status).toBe(404);
+		expect((await api.getImageFile(image.id, 'other.jpg')).status).toBe(404);
+	});
+
+	it('answers 404 image expired for an id with no bytes', async () => {
+		const res = await api.getImageFile(crypto.randomUUID(), 'thumb.jpg');
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe('image expired');
+	});
+
+	it('publishes an image event but keeps it out of node timelines', async () => {
+		const p = await newProject();
+		const { taskId } = await newTask(p, { title: 'T', steps: [{ key: 'one' }] });
+		const received: Body[] = [];
+		const unsubscribe = subscribe(p.id, (e) => {
+			received.push(e as unknown as Body);
+		});
+
+		await api.postImage(taskId, { thumb, path: 'one' }, p.writeKey);
+		unsubscribe();
+
+		expect(received).toHaveLength(1);
+		expect(received[0]).toMatchObject({ type: 'image', taskId, path: 'one' });
+		expect((await events(taskId, 'one')).map((e) => e.type)).toEqual(['node']);
+	});
+
+	it('requires the write key of the task project', async () => {
+		const p = await newProject();
+		const other = await newProject();
+		const { taskId } = await newTask(p);
+
+		expect((await api.postImage(taskId, { thumb })).status).toBe(401);
+		expect((await api.postImage(taskId, { thumb }, other.writeKey)).status).toBe(403);
+	});
+
+	const THUMB_ERROR = 'thumb must be a base64 JPEG of at most 256×256 px and 64 KiB';
+	const FULL_ERROR = 'full must be a base64 JPEG of at most 512×512 px and 192 KiB';
+	it.each([
+		['no thumb', {}, 'thumb is required'],
+		['a thumb too wide', { thumb: fakeJpeg(257, 10).toString('base64') }, THUMB_ERROR],
+		['a thumb too heavy', { thumb: fakeJpeg(10, 10, 64 * 1024).toString('base64') }, THUMB_ERROR],
+		[
+			'a PNG thumb',
+			{ thumb: Buffer.from('\x89PNG\r\n\x1a\n0000').toString('base64') },
+			THUMB_ERROR
+		],
+		['a thumb that is not base64', { thumb: '***' }, THUMB_ERROR],
+		['a full too tall', { thumb, full: fakeJpeg(10, 513).toString('base64') }, FULL_ERROR],
+		[
+			'a caption too long',
+			{ thumb, caption: 'x'.repeat(301) },
+			'caption must be a string of at most 300 characters'
+		],
+		['a bad path', { thumb, path: 'bad key!' }, 'malformed node path']
+	])('rejects %s', async (_, body, error) => {
+		const p = await newProject();
+		const { taskId } = await newTask(p);
+		const res = await api.postImage(taskId, body, p.writeKey);
 		expect(res.status).toBe(400);
 		expect((await res.json()).error).toBe(error);
 	});

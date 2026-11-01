@@ -20,6 +20,20 @@ export const variables = defineEnvVars({
 		description: 'Milliseconds over which a client address regains its full write burst.',
 		schema: (value) => Number(value || 300_000)
 	},
+	CHRONICLE_IMAGE_CACHE_BYTES: {
+		description:
+			'Bytes of image data held in memory across all projects; the oldest images go first.',
+		schema: (value) => Number(value || 83_886_080)
+	},
+	CHRONICLE_IMAGE_FINISHED_MS: {
+		description: 'Milliseconds after a task finishes before its images are dropped.',
+		schema: (value) => Number(value || 600_000)
+	},
+	CHRONICLE_IMAGE_IDLE_MS: {
+		description:
+			'Milliseconds without an event on an unfinished task before its images are dropped.',
+		schema: (value) => Number(value || 1_800_000)
+	},
 	CHRONICLE_HEARTBEAT_MS: {
 		description: 'Milliseconds between `: ping` heartbeats on a project stream.',
 		schema: (value) => Number(value || 25_000)

@@ -68,6 +68,17 @@ const NOTICE = {
 	createdAt: '2026-01-01T00:00:00.000Z'
 };
 
+const IMAGE = {
+	id: 'i1',
+	taskId: 'task1',
+	path: null,
+	caption: 'Login',
+	review: true,
+	width: 512,
+	height: 341,
+	createdAt: '2026-01-01T00:00:00.000Z'
+};
+
 function fakeClient(): FakeClient {
 	return {
 		discover: vi.fn(async () => SERVER),
@@ -88,6 +99,7 @@ function fakeClient(): FakeClient {
 			okResult({ project: { id: 'proj1', name: 'P' }, projectUrl: `${SERVER}/p/proj1` })
 		),
 		addNotice: vi.fn(async () => okResult({ notice: NOTICE })),
+		addImage: vi.fn(async () => okResult({ image: IMAGE })),
 		getTask: vi.fn(async () =>
 			okResult({ task: TASK, nodes: [STEP_NODE], notices: [], url: TASK_URL })
 		),
@@ -154,12 +166,13 @@ describe('chronicle MCP server', () => {
 	});
 
 	describe('tool listing', () => {
-		it('lists exactly the seven chronicle tools', async () => {
+		it('lists exactly the eight chronicle tools', async () => {
 			const { mcp } = await connect();
 
 			const { tools } = await mcp.listTools();
 
 			expect(tools.map((t) => t.name).sort()).toEqual([
+				'add_image',
 				'add_notice',
 				'configure',
 				'get_task',
@@ -441,6 +454,12 @@ describe('chronicle MCP server', () => {
 				okResult({ notice: NOTICE })
 			],
 			[
+				'add_image',
+				'addImage',
+				{ taskId: 'task1', file: '/tmp/shot.png', caption: 'Login', review: true },
+				okResult({ image: IMAGE })
+			],
+			[
 				'get_task',
 				'getTask',
 				{ taskId: 'task1' },
@@ -470,6 +489,7 @@ describe('chronicle MCP server', () => {
 			['update_step', 'updateStep', { taskId: 'task1', path: 'build' }],
 			['update_task', 'updateTask', { taskId: 'task1' }],
 			['add_notice', 'addNotice', { taskId: 'task1', kind: 'caveat', text: 'x' }],
+			['add_image', 'addImage', { taskId: 'task1', file: '/tmp/shot.png' }],
 			['get_task', 'getTask', { taskId: 'task1' }],
 			['configure', 'configure', {}]
 		];

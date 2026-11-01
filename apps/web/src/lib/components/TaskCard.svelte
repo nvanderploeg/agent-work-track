@@ -13,6 +13,7 @@
 	import { totalTokens } from '../ui/meta.ts';
 	import type { Task } from '../types.ts';
 	import AgentChip from './AgentChip.svelte';
+	import ImageStrip from './ImageStrip.svelte';
 	import Links from './Links.svelte';
 	import NodeTree from './NodeTree.svelte';
 	import NoticeList from './NoticeList.svelte';
@@ -29,6 +30,7 @@
 	const tokens = $derived(totalTokens(task, nodes));
 	const notices = $derived(board.noticesOf(task.id));
 	const pending = $derived(board.pendingNotices(task.id));
+	const images = $derived(board.imagesOf(task.id, null));
 	let noticesOpen = $state(false);
 	const ref = $derived([task.repo, task.branch].filter(Boolean).join(' @ '));
 	const runtime = $derived(runtimeOf(task, board.now));
@@ -114,6 +116,8 @@
 			— agent may have stopped
 		</p>
 	{/if}
+
+	<ImageStrip {images} />
 
 	{#if notices.length}
 		<div class="notice-block">

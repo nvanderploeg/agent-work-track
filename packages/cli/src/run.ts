@@ -27,6 +27,7 @@ const USAGE = `usage:
                   [agent] [--link url[|label]]...
   chronicle task <taskId> [state] [--title t] [--summary s] [--note n] [agent] [--link url[|label]]... [--pr url]...
   chronicle notice <taskId> <assumption|caveat> <text> [--path p]
+  chronicle image <taskId> <file> [--path p] [--caption c] [--review]
   chronicle sync [--task id]...
   chronicle project [--name n] [--notes s] [--link url[|label]]... [--task id] [--cwd dir]
   chronicle get <taskId>
@@ -62,7 +63,13 @@ function parse<const O extends NonNullable<Parameters<typeof parseArgs>[0]>['opt
 		throw new UsageError('wrong number of arguments');
 	}
 	return parsed as {
-		values: { [K in keyof O]?: O[K] extends { multiple: true } ? string[] : string };
+		values: {
+			[K in keyof O]?: O[K] extends { multiple: true }
+				? string[]
+				: O[K] extends { type: 'boolean' }
+					? boolean
+					: string;
+		};
 		positionals: string[];
 	};
 }
@@ -262,6 +269,25 @@ export async function run(argv: string[], io: RunIo): Promise<number> {
 					path: values.path
 				});
 				return finish(result, (v) => `${v.notice.id} ${v.notice.kind}`);
+			}
+			case 'image': {
+				const { values, positionals } = parse(
+					rest,
+					{
+						path: { type: 'string' },
+						caption: { type: 'string' },
+						review: { type: 'boolean' }
+					},
+					[2, 2]
+				);
+				const result = await client.addImage({
+					taskId: positionals[0],
+					file: positionals[1],
+					path: values.path,
+					caption: values.caption,
+					review: values.review
+				});
+				return finish(result, (v) => v.image.id);
 			}
 			case 'sync': {
 				const { values } = parse(rest, { task: { type: 'string', multiple: true } }, [0, 0]);

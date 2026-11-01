@@ -110,19 +110,32 @@ export interface Notice {
 	createdAt: string;
 }
 
+// The bytes live only in the server's memory and expire; this record outlives them.
+export interface Image {
+	id: string;
+	taskId: string;
+	path: string | null;
+	caption: string;
+	review: boolean; // has a 512 px view the user is meant to look at
+	width: number; // of the largest stored size
+	height: number;
+	createdAt: string;
+}
+
 export interface Snapshot {
 	project: Project;
 	tasks: Task[];
 	nodes: Node[];
 	notices: Notice[];
+	images: Image[];
 	lastSeq: number;
 }
 
 export interface ChronicleEvent {
 	seq: number;
-	type: 'config' | 'project' | 'task' | 'node' | 'notice';
+	type: 'config' | 'project' | 'task' | 'node' | 'notice' | 'image';
 	taskId: string | null;
 	path: string | null;
-	payload: { config: ProjectConfig } | Project | Task | Node | Notice;
+	payload: { config: ProjectConfig } | Project | Task | Node | Notice | Image;
 	at: string;
 }

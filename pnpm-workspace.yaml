@@ -4,6 +4,7 @@ packages:
 
 allowBuilds:
   esbuild: true
+  sharp: false
 
 minimumReleaseAgeExclude:
   - zod@4.6.7

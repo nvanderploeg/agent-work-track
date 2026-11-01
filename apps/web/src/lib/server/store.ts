@@ -1,11 +1,13 @@
-import { and, asc, desc, eq, gt, inArray, isNull, max, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, max, notInArray } from 'drizzle-orm';
 import { ApiError } from '#lib/server/api.ts';
 import { publish } from '#lib/server/bus.ts';
 import { db } from '#lib/server/db/index.ts';
 import { log } from '#lib/server/log.ts';
-import { events, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
+import { events, images, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
+import { imageCache } from '#lib/server/images.ts';
 import {
 	toEvent,
+	toImage,
 	toNode,
 	toNotice,
 	toProject,
@@ -17,6 +19,7 @@ import {
 import type {
 	NodeInput,
 	NoticeInput,
+	ImageInput,
 	ProjectPatch,
 	StepInput,
 	TaskInput,
@@ -24,6 +27,7 @@ import type {
 } from '#lib/server/validate.ts';
 import type {
 	AgentInfo,
+	Image,
 	Node,
 	Notice,
 	Project,
@@ -71,7 +75,7 @@ export async function taskEvents(taskId: string, path?: string): Promise<Chronic
 		.where(
 			and(
 				eq(events.taskId, taskId),
-				ne(events.type, 'notice'),
+				notInArray(events.type, ['notice', 'image']),
 				path === undefined ? undefined : eq(events.path, path)
 			)
 		)
@@ -116,18 +120,31 @@ export async function snapshot(projectId: string): Promise<Snapshot | undefined>
 				)
 				.orderBy(asc(notices.createdAt), asc(notices.id))
 		: [];
+	const imageRows = taskRows.length
+		? await db
+				.select()
+				.from(images)
+				.where(
+					inArray(
+						images.taskId,
+						taskRows.map((task) => task.id)
+					)
+				)
+				.orderBy(asc(images.createdAt), asc(images.id))
+		: [];
 	return {
 		project: toProject(project),
 		tasks: taskRows.map(toTask),
 		nodes: nodeRows.map(toNode),
 		notices: noticeRows.map(toNotice),
+		images: imageRows.map(toImage),
 		lastSeq: Number(seqRow?.seq ?? 0)
 	};
 }
 
 export async function getTaskWithNodes(
 	taskId: string
-): Promise<{ task: Task; nodes: Node[]; notices: Notice[] } | undefined> {
+): Promise<{ task: Task; nodes: Node[]; notices: Notice[]; images: Image[] } | undefined> {
 	const row = await getTaskRow(taskId);
 	if (!row) return undefined;
 	const nodeRows = await db
@@ -140,7 +157,17 @@ export async function getTaskWithNodes(
 		.from(notices)
 		.where(eq(notices.taskId, taskId))
 		.orderBy(asc(notices.createdAt), asc(notices.id));
-	return { task: toTask(row), nodes: nodeRows.map(toNode), notices: noticeRows.map(toNotice) };
+	const imageRows = await db
+		.select()
+		.from(images)
+		.where(eq(images.taskId, taskId))
+		.orderBy(asc(images.createdAt), asc(images.id));
+	return {
+		task: toTask(row),
+		nodes: nodeRows.map(toNode),
+		notices: noticeRows.map(toNotice),
+		images: imageRows.map(toImage)
+	};
 }
 
 export async function insertProject(row: typeof projects.$inferInsert): Promise<void> {
@@ -432,6 +459,42 @@ export async function addNotice(
 		await ctx.emit('notice', taskId, input.path, notice);
 		return notice;
 	});
+}
+
+// Bytes enter the cache before the event publishes, so a viewer reacting to it can fetch them.
+export async function addImage(
+	projectId: string,
+	taskId: string,
+	input: ImageInput
+): Promise<Image> {
+	const id = crypto.randomUUID();
+	try {
+		return await mutate(projectId, async (ctx) => {
+			const task = await taskInProject(ctx, taskId);
+			if (!task) throw new ApiError(404, 'task not found');
+			const row = {
+				id,
+				taskId,
+				path: input.path,
+				caption: input.caption,
+				review: input.full !== null,
+				width: input.width,
+				height: input.height,
+				createdAt: ctx.now
+			};
+			await ctx.tx.insert(images).values(row);
+			const image = toImage(row);
+			imageCache.put(
+				{ id, projectId, taskId, thumb: input.thumb, full: input.full },
+				task.finishedAt?.toISOString() ?? null
+			);
+			await ctx.emit('image', taskId, input.path, image);
+			return image;
+		});
+	} catch (error) {
+		imageCache.drop(id);
+		throw error;
+	}
 }
 
 export async function createTask(

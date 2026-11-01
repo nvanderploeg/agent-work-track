@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+	boolean,
 	char,
 	index,
 	int,
@@ -91,6 +92,23 @@ export const notices = mysqlTable(
 		createdAt: now('created_at')
 	},
 	(table) => [index('notices_task_created_idx').on(table.taskId, table.createdAt)]
+);
+
+export const images = mysqlTable(
+	'images',
+	{
+		id: varchar('id', { length: 36 }).primaryKey(),
+		taskId: varchar('task_id', { length: 36 })
+			.notNull()
+			.references(() => tasks.id, { onDelete: 'cascade' }),
+		path: varchar('path', { length: 512 }),
+		caption: varchar('caption', { length: 300 }).notNull(),
+		review: boolean('review').notNull(),
+		width: int('width').notNull(),
+		height: int('height').notNull(),
+		createdAt: now('created_at')
+	},
+	(table) => [index('images_task_created_idx').on(table.taskId, table.createdAt)]
 );
 
 export const events = mysqlTable(

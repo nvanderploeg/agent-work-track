@@ -5,6 +5,7 @@ import http, { type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 import {
 	createClient,
 	repoIdentity,
@@ -742,6 +743,118 @@ describe('addNotice', () => {
 		const client = makeClient({ candidates: [DEAD] });
 
 		expect(await client.addNotice({ taskId: 'nope', kind: 'caveat', text: 'x' })).toEqual({
+			ok: false,
+			warning: 'unknown task nope on this machine — continuing untracked'
+		});
+	});
+});
+
+describe('addImage', () => {
+	const IMAGE = {
+		id: 'i-1',
+		taskId: 'task-1',
+		path: 'chunk-1',
+		caption: 'Login page',
+		review: true,
+		width: 512,
+		height: 341,
+		createdAt: '2026-01-01T00:00:00.000Z'
+	};
+	let dir: string;
+	let png: string;
+
+	beforeEach(async () => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chronicle-image-'));
+		png = path.join(dir, 'shot.png');
+		const raw = Buffer.alloc(1200 * 800 * 4);
+		for (let i = 0; i < raw.length; i += 4) {
+			const px = i / 4;
+			raw[i] = (px % 1200) % 256;
+			raw[i + 1] = Math.floor(px / 1200) % 256;
+			raw[i + 2] = (px * 7) % 256;
+			raw[i + 3] = 200;
+		}
+		await sharp(raw, { raw: { width: 1200, height: 800, channels: 4 } })
+			.png()
+			.toFile(png);
+	});
+
+	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+	async function jpeg(base64: unknown) {
+		expect(typeof base64).toBe('string');
+		const bytes = Buffer.from(base64 as string, 'base64');
+		return { bytes, meta: await sharp(bytes).metadata() };
+	}
+
+	it('POSTs a 256 px thumb and a 512 px full JPEG for review', async () => {
+		const fake = await startFake(() => ({ status: 201, body: { image: IMAGE } }));
+		seedHandle(fake.url);
+		const client = makeClient({ candidates: [DEAD] });
+
+		const result = await client.addImage({
+			taskId: 'task-1',
+			file: png,
+			path: 'chunk-1',
+			caption: 'Login page',
+			review: true
+		});
+
+		expect(result).toEqual({ ok: true, value: { image: IMAGE } });
+		const [req] = fake.requests;
+		expect(req.method).toBe('POST');
+		expect(req.path).toBe('/api/tasks/task-1/images');
+		expect(req.headers.authorization).toBe('Bearer key-1');
+		const body = req.body as Record<string, unknown>;
+		expect(body.caption).toBe('Login page');
+		expect(body.path).toBe('chunk-1');
+		const thumb = await jpeg(body.thumb);
+		expect(thumb.meta.format).toBe('jpeg');
+		expect([thumb.meta.width, thumb.meta.height]).toEqual([256, 171]);
+		expect(thumb.bytes.length).toBeLessThanOrEqual(64 * 1024);
+		const full = await jpeg(body.full);
+		expect(full.meta.format).toBe('jpeg');
+		expect([full.meta.width, full.meta.height]).toEqual([512, 341]);
+		expect(full.bytes.length).toBeLessThanOrEqual(192 * 1024);
+	});
+
+	it('sends only the thumb without review, and never enlarges', async () => {
+		const small = path.join(dir, 'small.png');
+		await sharp({
+			create: { width: 100, height: 40, channels: 3, background: '#336699' }
+		})
+			.png()
+			.toFile(small);
+		const fake = await startFake(() => ({ status: 201, body: { image: IMAGE } }));
+		seedHandle(fake.url);
+		const client = makeClient({ candidates: [DEAD] });
+
+		await client.addImage({ taskId: 'task-1', file: small });
+
+		const body = fake.requests[0].body as Record<string, unknown>;
+		expect(Object.keys(body)).toEqual(['thumb']);
+		const thumb = await jpeg(body.thumb);
+		expect([thumb.meta.width, thumb.meta.height]).toEqual([100, 40]);
+	});
+
+	it('warns without contacting the server when the file is not an image', async () => {
+		const fake = await startFake(() => ({ status: 201, body: { image: IMAGE } }));
+		seedHandle(fake.url);
+		const client = makeClient({ candidates: [DEAD] });
+		const bogus = path.join(dir, 'notes.txt');
+		fs.writeFileSync(bogus, 'not an image');
+
+		expect(await client.addImage({ taskId: 'task-1', file: bogus })).toEqual({
+			ok: false,
+			warning: `chronicle failed: cannot read image ${bogus}`
+		});
+		expect(fake.requests).toEqual([]);
+	});
+
+	it('returns the unknown-task warning for an unknown task', async () => {
+		const client = makeClient({ candidates: [DEAD] });
+
+		expect(await client.addImage({ taskId: 'nope', file: png })).toEqual({
 			ok: false,
 			warning: 'unknown task nope on this machine — continuing untracked'
 		});

@@ -1,9 +1,10 @@
 import { getContext, setContext } from 'svelte';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
-import type { Node, Notice, ProjectConfig, Task, ChronicleEvent } from '../types.ts';
+import type { Image, Node, Notice, ProjectConfig, Task, ChronicleEvent } from '../types.ts';
 import {
 	allSettled,
 	applyEvent,
+	imagesOf,
 	justFinished,
 	kindOf,
 	needsReview,
@@ -58,6 +59,8 @@ export class Board {
 	timelineOpen = new SvelteSet<string>();
 	timelines = new SvelteMap<string, Timeline>();
 	noticeStatus = new SvelteMap<string, Exclude<NoticeStatus, 'unread'>>();
+	expired = new SvelteSet<string>();
+	viewing: Image | null = $state(null);
 
 	readonly only: string | null;
 
@@ -115,6 +118,18 @@ export class Board {
 		return noticesOf(this.state.notices, taskId);
 	}
 
+	imagesOf(taskId: string, path: string | null): Image[] {
+		return imagesOf(this.state.images, taskId, path);
+	}
+
+	view(image: Image | null): void {
+		this.viewing = image;
+	}
+
+	markExpired(id: string): void {
+		this.expired.add(id);
+	}
+
 	statusOf(id: string): NoticeStatus {
 		return this.noticeStatus.get(id) ?? 'unread';
 	}
@@ -163,7 +178,7 @@ export class Board {
 		es.onerror = () => {
 			if (es.readyState !== EventSource.CLOSED) this.connection = 'retrying';
 		};
-		for (const type of ['task', 'node', 'notice', 'config', 'project'] as const) {
+		for (const type of ['task', 'node', 'notice', 'image', 'config', 'project'] as const) {
 			es.addEventListener(type, (e) => this.onFrame(type, e as MessageEvent));
 		}
 		es.addEventListener('idle', () => {
@@ -199,6 +214,11 @@ export class Board {
 			taskId = (payload as Notice).taskId;
 			path = (payload as Notice).path;
 			at = (payload as Notice).createdAt;
+		}
+		if (type === 'image') {
+			taskId = (payload as Image).taskId;
+			path = (payload as Image).path;
+			at = (payload as Image).createdAt;
 		}
 		this.receive({ seq, type, taskId, path, payload, at });
 	}

@@ -110,6 +110,18 @@ export interface Notice {
 	createdAt: string;
 }
 
+// The bytes live only in the server's memory and expire; this record outlives them.
+export interface Image {
+	id: string;
+	taskId: string;
+	path: string | null;
+	caption: string;
+	review: boolean; // has a 512 px view the user is meant to look at
+	width: number; // of the largest stored size
+	height: number;
+	createdAt: string;
+}
+
 export interface ClientOptions {
 	env?: Record<string, string | undefined>;
 	configDir?: string;
@@ -118,6 +130,7 @@ export interface ClientOptions {
 	probeTimeoutMs?: number;
 	remoteProbeTimeoutMs?: number;
 	requestTimeoutMs?: number;
+	imageTimeoutMs?: number;
 	runCommand?: (command: string, args: string[]) => Promise<string | null>;
 }
 
@@ -204,6 +217,13 @@ export interface ChronicleClient {
 		text: string;
 		path?: string;
 	}): Promise<Result<{ notice: Notice }>>;
+	addImage(input: {
+		taskId: string;
+		file: string;
+		path?: string;
+		caption?: string;
+		review?: boolean;
+	}): Promise<Result<{ image: Image }>>;
 	getTask(input: {
 		taskId: string;
 	}): Promise<Result<{ task: Task; nodes: Node[]; notices: Notice[]; url: string }>>;

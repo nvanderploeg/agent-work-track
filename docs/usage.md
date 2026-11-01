@@ -116,6 +116,7 @@ own node path, so parallel workers show up as parallel rows.
 | `update_task`    | `taskId`, `title?`, `summary?`, `state?`, `note?`, `agent?`, `links?`                                        | Change the task itself.                                        |
 | `update_project` | `taskId?`, `cwd?`, `name?`, `notes?`, `links?`                                                               | Rename the project, set its notes and project-wide links.      |
 | `add_notice`     | `taskId`, `kind` (`assumption`\|`caveat`), `text`, `path?`                                                   | Flag an assumption or caveat; shows as an alert on the task and in the Notices tab. |
+| `add_image`      | `taskId`, `file`, `path?`, `caption?`, `review?`                                                             | Attach a screenshot as a thumbnail; `review` adds a 512 px view for the user. Expires after the task finishes or idles. |
 | `get_task`       | `taskId`                                                                                                     | Read a task, its nodes and notices back (use after context compaction). |
 | `configure`      | `taskId?`, `cwd?`, `config?`, `patch?`                                                                       | Read, replace or patch the project's states, colors, theme.    |
 
@@ -137,6 +138,7 @@ id=$(chronicle start "Add rate limiting" --summary "Token bucket per API key" --
 chronicle step "$id" chunk-1 in_work --note "implementing" --tag "round 1" --model claude-sonnet-5-5
 chronicle step "$id" chunk-1/tests testing
 chronicle notice "$id" assumption "Dates are UTC" --path chunk-1
+chronicle image "$id" ./shots/login.png --path chunk-1 --caption "New login form" --review
 chronicle step "$id" chunk-1 done --note "a1b2c3d Add token bucket" --tokens 48200
 chronicle task "$id" needs_input --note "Limit per key or per IP?"
 chronicle task "$id" review --pr "https://github.com/me/repo/pull/42" --tokens 88000

@@ -9,6 +9,7 @@ Every package builds against this file. When behaviour and this file disagree, t
 - **Node** — a step or subtask in a task's tree, addressed by a **path** of agent-chosen keys joined by `/` (`chunk-2`, `chunk-2/tests`). Depth 1 = step.
 - **State** — a key from the project config. Each state has a **kind**.
 - **Notice** — an assumption or caveat an agent flags on a task or one of its nodes. Append-only; review marks live in the viewer's browser, never on the server.
+- **Image** — a JPEG an agent attaches to a task or one of its nodes. The record is stored; the bytes live only in server memory and expire (see § Images).
 
 ## Types
 
@@ -121,20 +122,32 @@ interface Notice {
 	createdAt: string;
 }
 
+interface Image {
+	id: string; // UUID v4
+	taskId: string;
+	path: string | null; // the node it belongs to; null for the task as a whole
+	caption: string; // ≤ 300 chars, '' when unset
+	review: boolean; // true when a 512 px `full` was uploaded: the user is meant to look at it
+	width: number; // pixels of the largest stored size
+	height: number;
+	createdAt: string;
+}
+
 interface Snapshot {
 	project: Project;
 	tasks: Task[]; // ordered by createdAt desc
 	nodes: Node[]; // all nodes of those tasks, ordered by taskId, depth, position
 	notices: Notice[]; // all notices of those tasks, ordered by createdAt, id
+	images: Image[]; // all image records of those tasks, expired or not, ordered by createdAt, id
 	lastSeq: number; // highest event seq for this project, 0 if none
 }
 
 interface ChronicleEvent {
 	seq: number;
-	type: 'config' | 'project' | 'task' | 'node' | 'notice';
+	type: 'config' | 'project' | 'task' | 'node' | 'notice' | 'image';
 	taskId: string | null;
 	path: string | null;
-	payload: { config: ProjectConfig } | Project | Task | Node | Notice; // full row snapshot after the write
+	payload: { config: ProjectConfig } | Project | Task | Node | Notice | Image; // full row snapshot after the write
 	at: string;
 }
 ```
@@ -171,11 +184,14 @@ Writes (🔑) need `Authorization: Bearer <writeKey>` of the project that owns t
 | PUT 🔑  | `/api/projects/:id/config`          | `ProjectConfig`                                  | 200 `{ config }`                                      |
 | PATCH 🔑 | `/api/projects/:id/config`         | `ConfigPatch`                                    | 200 `{ config }`                                      |
 | POST 🔑 | `/api/projects/:id/tasks`           | `{ title, summary?, state?, note?, agent?, links?, prs?, repo?, branch?, steps? }` | 201 `{ taskId, url, task, nodes }` |
-| GET    | `/api/tasks/:taskId`                | —                                                | 200 `{ task, nodes, notices }`                        |
-| GET    | `/api/tasks/:taskId/events`         | query `path?`                                    | 200 `{ events: ChronicleEvent[] }` (seq asc; `path` filters to that node; `notice` events are left out) |
+| GET    | `/api/tasks/:taskId`                | —                                                | 200 `{ task, nodes, notices, images }`                |
+| GET    | `/api/tasks/:taskId/events`         | query `path?`                                    | 200 `{ events: ChronicleEvent[] }` (seq asc; `path` filters to that node; `notice` and `image` events are left out) |
 | PATCH 🔑 | `/api/tasks/:taskId`               | `{ title?, summary?, state?, note?, agent?, links?, prs?, repo?, branch? }` | 200 `{ task }`  |
 | PUT 🔑  | `/api/tasks/:taskId/nodes/<path…>`  | `{ title?, state?, note?, tags?, agent?, links?, position? }` | 200 `{ node }`               |
 | POST 🔑 | `/api/tasks/:taskId/notices`        | `{ kind, text, path? }`                          | 201 `{ notice }`                                      |
+| POST 🔑 | `/api/tasks/:taskId/images`         | `{ thumb, full?, caption?, path? }`              | 201 `{ image }`                                       |
+| GET    | `/api/images/:imageId/thumb.jpg`    | —                                                | 200 `image/jpeg`; 404 once expired                    |
+| GET    | `/api/images/:imageId/full.jpg`     | —                                                | 200 `image/jpeg`; 404 once expired or when not `review` |
 | GET    | `/api/projects/:id/stream`          | header `Last-Event-ID` or query `since`          | 200 `text/event-stream`                               |
 
 - `POST /api/projects`: `name` defaults to a random three-word moniker (`Quiet Teal Otter`), returned in the body; `preset` defaults to `'build-it'`; `config`, when given, is used instead of the preset. Unknown preset or invalid config → 400. `url` = `<origin>/p/<id>`.
@@ -183,6 +199,15 @@ Writes (🔑) need `Authorization: Bearer <writeKey>` of the project that owns t
 - `PATCH /api/projects/:id` emits a `project` event carrying the whole `Project`.
 - Every `POST`, `PUT` and `PATCH` under `/api` draws from a token bucket per client address: `CHRONICLE_WRITES_PER_WINDOW` (default 120) at once, refilled at that many per `CHRONICLE_WRITE_WINDOW_MS` (default 300 000); `0` disables it. An empty bucket → 429 `{ error: 'too many writes from this address; retry later' }` with `Retry-After: <whole seconds>`, before the body or key is checked.
 - 401 `{ error: 'missing write key' }` with no bearer token; 403 `{ error: 'invalid write key' }` on mismatch; 404 `{ error: 'project not found' | 'task not found' }`; 400 for malformed ids, paths, or bodies.
+
+## Images
+
+- Upload: `thumb` is base64 of a baseline or progressive JPEG at most 256×256 px and 64 KiB; `full`, when given, at most 512×512 px and 192 KiB. Anything else → 400 naming the field. The server never decodes pixels; it reads the size from the JPEG frame header. `review` = `full` was given; `width`/`height` come from `full` when given, else `thumb`. `path` is checked like a Notice's and need not exist.
+- The upload writes the record and an `image` event like any other write (`lastWriteAt`, rate limit).
+- Cache: the bytes of every live image share one in-memory budget, `CHRONICLE_IMAGE_CACHE_BYTES` (default 83 886 080, 80 MiB). An upload that overflows it evicts the oldest images first. A restart drops every image.
+- Expiry, per task: a task in a `done`- or `failed`-kind state expires its images `CHRONICLE_IMAGE_FINISHED_MS` (default 600 000) after `finishedAt`; any other task, `CHRONICLE_IMAGE_IDLE_MS` (default 1 800 000) after its last event of any type. A task that leaves a final state falls back to the idle rule.
+- An expired or evicted image answers 404 `{ error: 'image expired' }`; its record stays.
+- Bytes are served with `content-type: image/jpeg` and `cache-control: private, max-age=604800, immutable`, so a viewer that loaded an image keeps it after the server drops it.
 
 ## Stream
 
@@ -222,4 +247,4 @@ Discovery: `CHRONICLE_URL` set → only that server, never another. Otherwise pr
 
 ## Server log
 
-One logfmt line per event on stdout: `<ISO time> <event> key=value…`. Events: `stream.open` (`project ip since`), `stream.close` (`project ip reason=client|idle|error seconds`), `ratelimit` (`ip method path retry_after`), `api.fail` (`ip method path status error`), `error` (unhandled, with stack), `project.create` (`id name ip`), `task.finish` (`project task state seconds tool model tokens`). Write keys and bodies are never logged.
+One logfmt line per event on stdout: `<ISO time> <event> key=value…`. Events: `image.evict` (`project task image reason=finished|idle|budget`), `stream.open` (`project ip since`), `stream.close` (`project ip reason=client|idle|error seconds`), `ratelimit` (`ip method path retry_after`), `api.fail` (`ip method path status error`), `error` (unhandled, with stack), `project.create` (`id name ip`), `task.finish` (`project task state seconds tool model tokens`). Write keys and bodies are never logged.

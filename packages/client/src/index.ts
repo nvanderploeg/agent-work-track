@@ -4,12 +4,14 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { DEFAULT_CANDIDATES, createDiscovery } from './discovery.ts';
 import { createStore, own, type ProjectEntry } from './files.ts';
 import { UNREACHABLE_WARNING, compact, request, type Failure, type RequestInit } from './http.ts';
+import { encodeImage } from './image.ts';
 import { fetchPr, isFinalPr, prTarget, runCommand } from './prs.ts';
 import { gitRefs, repoFromRemote, repoIdentity } from './repo.ts';
 import type {
 	AgentInfo,
 	ClientOptions,
 	DoctorReport,
+	Image,
 	Node,
 	Notice,
 	Project,
@@ -83,6 +85,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 	const settledPrs = new Set<string>();
 	const fetchFn = options.fetch ?? globalThis.fetch;
 	const requestTimeoutMs = options.requestTimeoutMs ?? 2000;
+	const imageTimeoutMs = options.imageTimeoutMs ?? 15_000;
 	const configDir =
 		options.configDir ?? join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'chronicle');
 	const store = createStore(configDir);
@@ -94,8 +97,13 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 		remoteProbeTimeoutMs: options.remoteProbeTimeoutMs ?? 2000
 	});
 
-	async function send<T>(server: string, path: string, init: RequestInit) {
-		const reply = await request<T>(fetchFn, requestTimeoutMs, `${server}${path}`, init);
+	async function send<T>(
+		server: string,
+		path: string,
+		init: RequestInit,
+		timeoutMs = requestTimeoutMs
+	) {
+		const reply = await request<T>(fetchFn, timeoutMs, `${server}${path}`, init);
 		if (
 			reply.ok ||
 			reply.status !== 429 ||
@@ -105,7 +113,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 			return reply;
 		}
 		await sleep(reply.retryAfterMs);
-		return request<T>(fetchFn, requestTimeoutMs, `${server}${path}`, init);
+		return request<T>(fetchFn, timeoutMs, `${server}${path}`, init);
 	}
 
 	async function createProject(
@@ -377,6 +385,31 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 					body: compact({ kind: input.kind, text: input.text, path: input.path })
 				});
 				return reply.ok ? { ok: true, value: { notice: reply.body.notice } } : reply;
+			}),
+
+		addImage: (input) =>
+			guard(async () => {
+				const target = await writeTarget(input.taskId);
+				if (!target.ok) return target;
+				const { server, key } = target.value;
+				const encoded = await encodeImage(input.file, input.review === true);
+				if (!encoded.ok) return encoded;
+				const reply = await send<{ image: Image }>(
+					server,
+					`${taskPath(input.taskId)}/images`,
+					{
+						method: 'POST',
+						key,
+						body: compact({
+							thumb: encoded.thumb,
+							full: encoded.full,
+							caption: input.caption,
+							path: input.path
+						})
+					},
+					imageTimeoutMs
+				);
+				return reply.ok ? { ok: true, value: { image: reply.body.image } } : reply;
 			}),
 
 		getTask: (input) =>

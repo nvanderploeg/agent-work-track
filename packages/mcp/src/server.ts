@@ -260,6 +260,22 @@ export function createServer(
 	);
 
 	server.registerTool(
+		'add_image',
+		{
+			description:
+				'Attach a screenshot or other image file to the task, or to a step by `path`, as a thumbnail on the dashboard; set `review` only when the user should look at it closely. Images expire from the server soon after the task finishes or goes idle.',
+			inputSchema: {
+				taskId: z.string(),
+				file: z.string().min(1),
+				path: z.string().optional(),
+				caption: z.string().max(300).optional(),
+				review: z.boolean().optional()
+			}
+		},
+		async (args) => respond(await client.addImage(args))
+	);
+
+	server.registerTool(
 		'update_project',
 		{
 			description:

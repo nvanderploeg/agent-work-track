@@ -1,4 +1,5 @@
 import { ApiError } from '#lib/server/api.ts';
+import { jpegSize } from '#lib/server/jpeg.ts';
 import { COLOR_PATTERN, isObject, validateConfig } from '#lib/server/config.ts';
 import { moniker } from '#lib/server/moniker.ts';
 import { PRESETS } from '#lib/server/presets.ts';
@@ -19,6 +20,12 @@ const PR_STATES = ['draft', 'open', 'merged', 'closed'] as const;
 const PR_CHECKS = ['pending', 'passing', 'failing'] as const;
 const NOTICE_KINDS = ['assumption', 'caveat'] as const;
 const MAX_NOTICE = 2000;
+const MAX_CAPTION = 300;
+const IMAGE_LIMITS = {
+	thumb: { side: 256, bytes: 64 * 1024 },
+	full: { side: 512, bytes: 192 * 1024 }
+} as const;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 const PR_REVIEWS = ['pending', 'approved', 'changes_requested'] as const;
 
 type Body = Record<string, unknown>;
@@ -59,6 +66,15 @@ export interface NoticeInput {
 	kind: NoticeKind;
 	text: string;
 	path: string | null;
+}
+
+export interface ImageInput {
+	thumb: Buffer;
+	full: Buffer | null;
+	caption: string;
+	path: string | null;
+	width: number;
+	height: number;
 }
 
 export interface ProjectPatch {
@@ -269,6 +285,48 @@ export function parseNoticeBody(body: Body): NoticeInput {
 	}
 	if (path !== undefined) parsePath(path);
 	return { kind, text: noticeText, path: path ?? null };
+}
+
+function jpegField(body: Body, field: keyof typeof IMAGE_LIMITS) {
+	const value = body[field];
+	if (value === undefined) return undefined;
+	const { side, bytes } = IMAGE_LIMITS[field];
+	const problem = `${field} must be a base64 JPEG of at most ${side}×${side} px and ${bytes / 1024} KiB`;
+	if (
+		typeof value !== 'string' ||
+		value.length > Math.ceil(bytes / 3) * 4 ||
+		value.length % 4 !== 0 ||
+		!BASE64.test(value)
+	) {
+		throw new ApiError(400, problem);
+	}
+	const data = Buffer.from(value, 'base64');
+	const size = jpegSize(data);
+	if (!size || data.length > bytes || size.width > side || size.height > side) {
+		throw new ApiError(400, problem);
+	}
+	return { data, ...size };
+}
+
+export function parseImageBody(body: Body): ImageInput {
+	const thumb = jpegField(body, 'thumb');
+	if (thumb === undefined) throw new ApiError(400, 'thumb is required');
+	const full = jpegField(body, 'full');
+	const caption = text(body, 'caption', { max: MAX_CAPTION }) ?? '';
+	const path = body.path;
+	if (path !== undefined && typeof path !== 'string') {
+		throw new ApiError(400, 'path must be a string');
+	}
+	if (path !== undefined) parsePath(path);
+	const largest = full ?? thumb;
+	return {
+		thumb: thumb.data,
+		full: full?.data ?? null,
+		caption,
+		path: path ?? null,
+		width: largest.width,
+		height: largest.height
+	};
 }
 
 export function parsePath(raw: string | null | undefined): string[] {

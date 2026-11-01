@@ -21,7 +21,8 @@ export const load: PageServerLoad = async ({ params }) => {
 			...result,
 			tasks: [task],
 			nodes: result.nodes.filter((n) => n.taskId === taskId),
-			notices: result.notices.filter((n) => n.taskId === taskId)
+			notices: result.notices.filter((n) => n.taskId === taskId),
+			images: result.images.filter((i) => i.taskId === taskId)
 		},
 		taskId,
 		now: Date.now()

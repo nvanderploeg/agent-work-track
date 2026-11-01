@@ -1,8 +1,9 @@
-import type { events, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
+import type { events, images, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
 import type {
 	AgentInfo,
 	Link,
 	Node,
+	Image,
 	Notice,
 	NoticeKind,
 	PullRequest,
@@ -17,6 +18,7 @@ export type ProjectRow = typeof projects.$inferSelect;
 export type TaskRow = typeof tasks.$inferSelect;
 export type NodeRow = typeof nodes.$inferSelect;
 export type NoticeRow = typeof notices.$inferSelect;
+export type ImageRow = typeof images.$inferSelect;
 export type EventRow = typeof events.$inferSelect;
 
 const iso = (date: Date) => date.toISOString();
@@ -80,6 +82,19 @@ export function toNotice(row: NoticeRow): Notice {
 		path: row.path ?? null,
 		kind: row.kind as NoticeKind,
 		text: row.text,
+		createdAt: iso(row.createdAt)
+	};
+}
+
+export function toImage(row: ImageRow): Image {
+	return {
+		id: row.id,
+		taskId: row.taskId,
+		path: row.path ?? null,
+		caption: row.caption,
+		review: row.review,
+		width: row.width,
+		height: row.height,
 		createdAt: iso(row.createdAt)
 	};
 }

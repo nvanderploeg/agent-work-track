@@ -11,6 +11,7 @@ import {
 	kindOf,
 	needsReview,
 	noticesOf,
+	imagesOf,
 	runtimeOf,
 	stateOf,
 	stepProgress,
@@ -18,7 +19,15 @@ import {
 	taskBucket
 } from './dashboard.ts';
 import type { DashboardState } from './dashboard.ts';
-import type { Node, Notice, Project, ProjectConfig, Task, ChronicleEvent } from '../types.ts';
+import type {
+	Image,
+	Node,
+	Notice,
+	Project,
+	ProjectConfig,
+	Task,
+	ChronicleEvent
+} from '../types.ts';
 
 const BUILD_IT: ProjectConfig = {
 	theme: 'system',
@@ -152,7 +161,7 @@ function project(over: Partial<Project> = {}): Project {
 }
 
 function dashboard(over: Partial<DashboardState> = {}): DashboardState {
-	return { project: project(), tasks: [], nodes: [], notices: [], lastSeq: 0, ...over };
+	return { project: project(), tasks: [], nodes: [], notices: [], images: [], lastSeq: 0, ...over };
 }
 
 function taskEvent(seq: number, t: Task): ChronicleEvent {
@@ -183,6 +192,24 @@ function noticeEvent(seq: number, n: Notice): ChronicleEvent {
 	return { seq, type: 'notice', taskId: n.taskId, path: n.path, payload: n, at: n.createdAt };
 }
 
+function image(over: Partial<Image> = {}): Image {
+	return {
+		id: 'i1',
+		taskId: 'a',
+		path: null,
+		caption: '',
+		review: false,
+		width: 256,
+		height: 144,
+		createdAt: iso(T0),
+		...over
+	};
+}
+
+function imageEvent(seq: number, i: Image): ChronicleEvent {
+	return { seq, type: 'image', taskId: i.taskId, path: i.path, payload: i, at: i.createdAt };
+}
+
 function deepFreeze<T>(value: T): T {
 	if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
 		Object.freeze(value);
@@ -190,6 +217,27 @@ function deepFreeze<T>(value: T): T {
 	}
 	return value;
 }
+
+describe('images', () => {
+	it('applyEvent appends an image once, even when the same image arrives under a new seq', () => {
+		const i = image();
+		const once = applyEvent(dashboard(), imageEvent(1, i));
+		expect(once.images).toEqual([i]);
+		expect(once.nodes).toEqual([]);
+		expect(applyEvent(once, imageEvent(2, i)).images).toEqual([i]);
+	});
+
+	it('imagesOf keeps the given task and node, in input order', () => {
+		const taskLevel = image({ id: 'i1' });
+		const onStep = image({ id: 'i2', path: 'step-1' });
+		const onStepLater = image({ id: 'i3', path: 'step-1' });
+		const other = image({ id: 'i4', taskId: 'b' });
+		const all = [taskLevel, onStep, other, onStepLater];
+		expect(imagesOf(all, 'a', null)).toEqual([taskLevel]);
+		expect(imagesOf(all, 'a', 'step-1')).toEqual([onStep, onStepLater]);
+		expect(imagesOf(all, 'a', 'step-2')).toEqual([]);
+	});
+});
 
 describe('notices', () => {
 	it('applyEvent appends a notice once, even when the same notice arrives under a new seq', () => {

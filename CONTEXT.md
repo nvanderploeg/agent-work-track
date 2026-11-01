@@ -34,6 +34,9 @@ The meaning of a State: `pending`, `active`, `review`, `blocked`, `failed` or `d
 **Notice**:
 An assumption or caveat an agent flags on a Task, or on one of its Nodes by Path. Append-only. A viewer marks each one approved or flagged in their own browser; the server holds no review state.
 
+**Image**:
+A screenshot or other picture an agent attaches to a Task, or to one of its Nodes by Path: a 256 px thumbnail, plus a 512 px view when it is marked for review. The server keeps the bytes in memory only and drops them once the Task has been finished or idle a while; the viewer's browser keeps what it already loaded.
+
 **Tag**:
 Short colored text attached to a Node, such as `round 2`.
 

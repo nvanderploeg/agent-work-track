@@ -56,6 +56,7 @@ function fakeClient() {
 		syncPrs: vi.fn(),
 		getTask: vi.fn(),
 		addNotice: vi.fn(),
+		addImage: vi.fn(),
 		configure: vi.fn(),
 		projectUrl: vi.fn(),
 		doctor: vi.fn()
@@ -642,6 +643,46 @@ describe('notice', () => {
 	});
 });
 
+describe('image', () => {
+	it('sends the file, path, caption and review flag to addImage and prints the id', async () => {
+		const client = fakeClient();
+		client.addImage.mockResolvedValue({ ok: true, value: { image: { id: 'i-1' } } });
+
+		const result = await invoke(
+			['image', 'task-1', 'shot.png', '--path', 'ui', '--caption', 'Login', '--review'],
+			client
+		);
+
+		expect(result.code).toBe(0);
+		expect(result.stdout.trim()).toBe('i-1');
+		expect(client.addImage).toHaveBeenCalledWith({
+			taskId: 'task-1',
+			file: 'shot.png',
+			path: 'ui',
+			caption: 'Login',
+			review: true
+		});
+	});
+
+	it('leaves review unset without --review', async () => {
+		const client = fakeClient();
+		client.addImage.mockResolvedValue({ ok: true, value: { image: { id: 'i-1' } } });
+
+		await invoke(['image', 'task-1', 'shot.png'], client);
+
+		expect(client.addImage.mock.calls[0][0].review).toBeUndefined();
+	});
+
+	it('exits 2 with usage when the file is missing', async () => {
+		const client = fakeClient();
+
+		const result = await invoke(['image', 'task-1'], client);
+
+		expect(result.code).toBe(2);
+		expect(client.addImage).not.toHaveBeenCalled();
+	});
+});
+
 describe('usage errors', () => {
 	const allMethods = [
 		'discover',
@@ -714,6 +755,7 @@ describe('warnings from every Result command', () => {
 		['step', ['step', 'task-1', 'a/b', 'done'], 'updateStep'],
 		['task', ['task', 'task-1', 'done'], 'updateTask'],
 		['notice', ['notice', 'task-1', 'caveat', 'x'], 'addNotice'],
+		['image', ['image', 'task-1', 'shot.png'], 'addImage'],
 		['get', ['get', 'task-1'], 'getTask'],
 		['config', ['config', '--theme', 'dark'], 'configure'],
 		['url', ['url', 'task-1'], 'projectUrl']

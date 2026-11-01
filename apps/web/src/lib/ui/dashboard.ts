@@ -1,4 +1,5 @@
 import type {
+	Image,
 	Node,
 	Notice,
 	Project,
@@ -14,6 +15,7 @@ export interface DashboardState {
 	tasks: Task[];
 	nodes: Node[];
 	notices: Notice[];
+	images: Image[];
 	lastSeq: number;
 }
 
@@ -59,6 +61,11 @@ export function applyEvent(state: DashboardState, event: ChronicleEvent): Dashbo
 		const notice = event.payload as Notice;
 		if (!state.notices.some((n) => n.id === notice.id)) {
 			next.notices = [...state.notices, notice];
+		}
+	} else if (event.type === 'image') {
+		const image = event.payload as Image;
+		if (!state.images.some((i) => i.id === image.id)) {
+			next.images = [...state.images, image];
 		}
 	} else {
 		next.nodes = upsertNode(state.nodes, event.payload as Node);
@@ -133,6 +140,10 @@ export function subtreeStates(nodes: Node[], taskId: string, path: string): stri
 
 export function noticesOf(notices: Notice[], taskId: string): Notice[] {
 	return notices.filter((n) => n.taskId === taskId);
+}
+
+export function imagesOf(images: Image[], taskId: string, path: string | null): Image[] {
+	return images.filter((i) => i.taskId === taskId && i.path === path);
 }
 
 // Approved notices stop raising the alert; unread and flagged ones keep it.

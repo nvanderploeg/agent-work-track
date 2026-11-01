@@ -7,6 +7,7 @@
 	import { Board, provideBoard } from '../ui/board.svelte.ts';
 	import type { Snapshot } from '../types.ts';
 	import { eyeColor, eyeSvg, formatTokens, tokensByModel } from '../ui/meta.ts';
+	import Lightbox from './Lightbox.svelte';
 	import Links from './Links.svelte';
 	import NoticesTab from './NoticesTab.svelte';
 	import SiteFooter from './SiteFooter.svelte';
@@ -191,6 +192,8 @@
 	</main>
 
 	<footer class="foot"><SiteFooter /></footer>
+
+	<Lightbox />
 
 	{#if board.connection === 'idle'}
 		<div class="overlay" role="status" data-testid="idle-overlay">

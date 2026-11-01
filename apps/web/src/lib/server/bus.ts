@@ -3,6 +3,7 @@ import type { ChronicleEvent } from '#lib/types.ts';
 type Listener = (event: ChronicleEvent) => void;
 
 const listeners = new Map<string, Set<Listener>>();
+const everywhere = new Set<Listener>();
 
 export function subscribe(projectId: string, listener: Listener): () => void {
 	let set = listeners.get(projectId);
@@ -14,8 +15,13 @@ export function subscribe(projectId: string, listener: Listener): () => void {
 	};
 }
 
+export function subscribeAll(listener: Listener): () => void {
+	everywhere.add(listener);
+	return () => everywhere.delete(listener);
+}
+
 export function publish(projectId: string, event: ChronicleEvent): void {
-	for (const listener of [...(listeners.get(projectId) ?? [])]) {
+	for (const listener of [...everywhere, ...(listeners.get(projectId) ?? [])]) {
 		try {
 			listener(event);
 		} catch (error) {
