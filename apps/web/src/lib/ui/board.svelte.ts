@@ -181,6 +181,7 @@ export class Board {
 		for (const type of ['task', 'node', 'notice', 'image', 'config', 'project'] as const) {
 			es.addEventListener(type, (e) => this.onFrame(type, e as MessageEvent));
 		}
+		es.addEventListener('reset', () => location.reload());
 		es.addEventListener('idle', () => {
 			es.close();
 			this.connection = 'idle';

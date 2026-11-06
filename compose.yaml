@@ -38,5 +38,12 @@ services:
     environment:
       DATABASE_URL: mysql://chronicle:${MYSQL_PASSWORD:-chronicle}@db:3306/chronicle
       ORIGIN: ${CHRONICLE_ORIGIN:-http://localhost:3280}
+      # Unset: /admin and its endpoints answer 404.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      ADMIN_MAX_BUNDLE_MB: ${ADMIN_MAX_BUNDLE_MB:-256}
+      BODY_SIZE_LIMIT: ${ADMIN_MAX_BUNDLE_MB:-256}M
+    volumes:
+      - backups:/backups
 volumes:
   mysqldata:
+  backups:

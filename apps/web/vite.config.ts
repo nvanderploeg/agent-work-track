@@ -7,6 +7,7 @@ import { buildInfo } from './build-info.ts';
 export default defineConfig(({ mode, command }) => {
 	// Set before the sveltekit plugin loads the environment; the real environment wins.
 	if (mode === 'test') {
+		process.env.ADMIN_TOKEN ??= 'test-admin-token-0123456789';
 		process.env.DATABASE_URL ??= 'mysql://chronicle:chronicle@127.0.0.1:3316/chronicle_test';
 	}
 	if (mode === 'development') {

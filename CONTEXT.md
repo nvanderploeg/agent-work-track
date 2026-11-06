@@ -37,6 +37,12 @@ An assumption or caveat an agent flags on a Task, or on one of its Nodes by Path
 **Image**:
 A screenshot or other picture an agent attaches to a Task, or to one of its Nodes by Path: a 256 px thumbnail, plus a 512 px view when it is marked for review. The server keeps the bytes in memory only and drops them once the Task has been finished or idle a while; the viewer's browser keeps what it already loaded.
 
+**Admin token**:
+The `ADMIN_TOKEN` secret that opens `/admin`, the portal for stats, deleting Projects, and exporting or importing a Bundle. Unset: the portal does not exist (404). Unrelated to a Write key.
+
+**Bundle**:
+The zip an export produces and an import consumes: `manifest.json` and `db.ndjson`, a consistent logical dump of every Project and its Tasks, Nodes, Notices and Events. Never holds Images. Importing one replaces all data.
+
 **Tag**:
 Short colored text attached to a Node, such as `round 2`.
 

@@ -1,3 +1,5 @@
+import { isUnder } from '#lib/server/path.ts';
+
 export type Verdict = { ok: true } | { ok: false; retryAfterMs: number };
 
 interface Bucket {
@@ -47,7 +49,7 @@ export function limitWrites(
 	limiter: ReturnType<typeof createRateLimiter>,
 	event: { request: Request; url: URL; getClientAddress: () => string }
 ): Response | undefined {
-	if (!WRITE_METHODS.has(event.request.method) || !event.url.pathname.startsWith('/api/')) {
+	if (!WRITE_METHODS.has(event.request.method) || !isUnder(event.url.pathname, '/api')) {
 		return undefined;
 	}
 	const verdict = limiter.take(event.getClientAddress());

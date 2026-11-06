@@ -1,5 +1,11 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
 
+function positive(name: string, value: string | undefined, fallback: number): number {
+	const number = value?.trim() ? Number(value) : fallback;
+	if (!Number.isFinite(number) || number <= 0) throw new Error(`${name} must be a positive number`);
+	return number;
+}
+
 export const variables = defineEnvVars({
 	DATABASE_URL: { description: 'The database connection string.' },
 	ORIGIN: {
@@ -33,6 +39,30 @@ export const variables = defineEnvVars({
 		description:
 			'Milliseconds without an event on an unfinished task before its images are dropped.',
 		schema: (value) => Number(value || 1_800_000)
+	},
+	ADMIN_TOKEN: {
+		description:
+			'The Admin token: 16 to 256 characters, no whitespace. Unset: the admin portal and every `/api/admin` route answer 404.',
+		schema: (value) => {
+			const token = value?.trim();
+			if (!token) return undefined;
+			if (token.length < 16 || token.length > 256 || /\s/.test(token)) {
+				throw new Error('ADMIN_TOKEN must be 16 to 256 characters with no whitespace');
+			}
+			return token;
+		}
+	},
+	ADMIN_BACKUP_DIR: {
+		description: 'Directory for the automatic pre-import backup Bundles. Unset: the OS temp dir.',
+		schema: (value) => value?.trim() || undefined
+	},
+	ADMIN_MAX_BUNDLE_MB: {
+		description: 'Largest Bundle an import accepts, in MiB of zip.',
+		schema: (value) => positive('ADMIN_MAX_BUNDLE_MB', value, 256)
+	},
+	ADMIN_MAX_UNPACKED_MB: {
+		description: 'Largest total unpacked size of a Bundle, in MiB.',
+		schema: (value) => positive('ADMIN_MAX_UNPACKED_MB', value, 2048)
 	},
 	CHRONICLE_HEARTBEAT_MS: {
 		description: 'Milliseconds between `: ping` heartbeats on a project stream.',

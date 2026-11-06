@@ -262,9 +262,13 @@ ORIGIN=http://localhost:3000 PORT=3000 node build
 | `CHRONICLE_HEARTBEAT_MS`      | Interval between `: ping` keep-alives on a stream. Default 25 000.                                                                                                                  |
 | `CHRONICLE_WRITES_PER_WINDOW` | Writes (`POST`/`PUT`/`PATCH` under `/api`) one client address may burst, refilled at this many per window; the rest get 429 with `Retry-After`. Default 120; 0 turns the limit off. |
 | `CHRONICLE_WRITE_WINDOW_MS`   | The refill window. Default 300 000 (5 min).                                                                                                                                         |
+| `ADMIN_TOKEN` | Turns on the admin portal. 16 to 256 characters, no spaces. Unset: `/admin` and `/api/admin/*` answer 404. See [Admin portal](#admin-portal-and-migrating-hosts). |
+| `ADMIN_BACKUP_DIR` | Where the automatic pre-import Bundle goes; the newest five are kept. Default: the system temp directory. The image sets `/backups`, a volume in the compose files. |
+| `ADMIN_MAX_BUNDLE_MB` | Largest Bundle an import accepts, in MiB of zip. Default 256; must be a positive number or the server will not start. The node adapter also caps request bodies at `BODY_SIZE_LIMIT` (image default `256M`; a bare `node build`: 512K), and nginx at `client_max_body_size`; the compose files derive `BODY_SIZE_LIMIT` from this variable, and nginx must be raised by hand. |
+| `ADMIN_MAX_UNPACKED_MB` | Largest total unpacked size of a Bundle. Default 2048. |
 | `ADDRESS_HEADER`              | Header the client address is read from behind a proxy (`x-real-ip` with the bundled nginx). Unset: the socket address.                                                              |
 
-The local `compose.yaml` passes only `DATABASE_URL` and `ORIGIN` to the app; set the other
+The local `compose.yaml` passes only `DATABASE_URL`, `ORIGIN` and `ADMIN_TOKEN` to the app; set the other
 `CHRONICLE_*` variables when running the built app directly or through `deploy/compose.prod.yml`.
 Compose reads `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `MYSQL_PASSWORD`,
 `MYSQL_ROOT_PASSWORD` and `MYSQL_PORT` from the environment.
@@ -329,6 +333,103 @@ curl -s -X POST localhost:3280/api/projects -H 'content-type: application/json' 
 The full contract, with types, write semantics and the stream format, is in
 [`docs/api.md`](api.md); the client, CLI and MCP contract is in
 [`docs/client.md`](client.md) and the dashboard helpers are in [`docs/ui.md`](ui.md).
+
+## Admin portal and migrating hosts
+
+Set `ADMIN_TOKEN` (`openssl rand -hex 32`) and open `/admin`. Unset, `/admin` and every
+`/api/admin/*` route answer 404, as if they did not exist.
+
+- **Browser.** `/admin` shows a login form. A correct token sets the `chronicle_admin` cookie:
+  `HttpOnly`, `SameSite=Strict`, `Secure` under an https `ORIGIN`, signed with a key derived from the
+  token, valid eight hours. Changing the token ends every session.
+- **curl.** `Authorization: Bearer <token>` on any `/api/admin` request.
+- **CSRF.** A state-changing request authenticated by cookie must carry a matching `Origin` and the
+  `x-csrf-token` header (the portal gets it from its page load). Bearer requests are exempt.
+- **Path matching.** The gate reads the path as written and after each round of percent-decoding,
+  lowercased, so `/%61pi/admin/...` is gated like `/api/admin/...`; a malformed escape is a 400.
+  Each admin handler also checks for itself: 404 with no token configured, 401 without a verdict.
+- **Body size.** `/api` bodies are read through a 4 MiB cap (the login body 1 KiB) however they
+  arrive; only the import route streams a large body to disk.
+- **Brute force.** Five failed attempts (login or Bearer) from one address lock it out for 15
+  minutes (429 with `retry-after`). The token is compared in constant time.
+
+| Method | Path                                           | Does                                                                          |
+| ------ | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| POST   | `/api/admin/login`                             | `{token}`; sets the cookie, returns `{ok, csrf}`                              |
+| POST   | `/api/admin/logout`                            | clears the cookie                                                             |
+| GET    | `/api/admin/stats`                             | version, database name and size, row counts, schema, migrations               |
+| GET    | `/api/admin/projects`                          | Projects with Task count, `bytes` (payload held) and `lastActivityAt`         |
+| DELETE | `/api/admin/projects/:id`                      | body `{confirm: "<Project name> (<first 8 of id>)"}`; cascades              |
+| GET    | `/api/admin/export`                            | streams a Bundle (`application/zip`)                                          |
+| POST   | `/api/admin/import?confirm=replace-everything` | body is the zip; replaces everything; add `&allow-empty=1` to accept a Bundle with no Projects                                          |
+
+**Migrating to another host.**
+
+```sh
+curl -H "Authorization: Bearer $ADMIN_TOKEN" -o chronicle.zip https://old.example.com/api/admin/export
+curl -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/zip' --data-binary @chronicle.zip \
+  'https://new.example.com/api/admin/import?confirm=replace-everything'
+```
+
+Then point clients at the new URL (`CHRONICLE_URL`). Write keys are stored as sha256 only, so keys
+agents already hold keep working. In the portal: Download bundle on the old host; on the new one
+choose the file, type `replace everything`, press Replace everything.
+
+**The Bundle** is a zip of `db.ndjson` and `manifest.json` (last, because the stream knows each
+file's size and hash only after sending it):
+
+```json
+{
+	"format": 1,
+	"service": "chronicle",
+	"appVersion": "0.1.0",
+	"schema": "0006_images",
+	"createdAt": "2026-11-06T17:00:00.000Z",
+	"files": [{ "path": "db.ndjson", "size": 123, "sha256": "…" }]
+}
+```
+
+`schema` is the latest drizzle migration tag the exporting build knew. Chronicle runs on MySQL, so
+there is no database file to copy: the export opens one `REPEATABLE READ` transaction
+`WITH CONSISTENT SNAPSHOT` and streams every table through it, a single point in time while writes
+continue. Each table is a header line `{"table","columns"}` followed by one JSON array per row;
+timestamps and JSON columns travel as the exact text MySQL holds.
+
+Carried: Projects (with each Write key's sha256), Tasks, Nodes, Notices and Events (so `seq` and a
+stream's replay stay meaningful). **Chronicle Images are not carried**: their bytes live in server
+memory and expire, so an imported Task has none and the images table is emptied.
+
+**Import** replaces everything, in this order:
+
+1. Spool the upload to a private temp file, capped at `ADMIN_MAX_BUNDLE_MB`.
+2. Validate before touching the database: zip structure, entry names (no `..`, absolute paths,
+   backslashes or duplicates; entries are matched against an allowlist and never written to disk by
+   name), declared and actual sizes (inflation stops at the declared size), zip CRCs, manifest
+   `format` and `service`, the schema level, and the size and sha256 of every file.
+3. Refuse a Bundle whose `schema` this build does not know (409, "newer than this build"). Older is
+   accepted.
+4. Freeze `/api` and wait up to 30 s for requests already running to finish (503 `retry` if they do not), so no write can commit between the backup and the swap. Then write the current database to a Bundle in `ADMIN_BACKUP_DIR` (newest five kept; the response names
+   the file).
+5. Scan `db.ndjson` once more: every table header present exactly once, rows the width of their
+   header, and at least one Project unless `allow-empty=1`, so a rehashed empty file cannot wipe the
+   server.
+6. In one MySQL transaction: delete every row, insert the Bundle's rows, commit. Any failure rolls
+   back and the database is as it was; a row the schema refuses (bad reference, oversized value) is a 422 naming MySQL's complaint, and the backup is removed. Steps after the commit (ending streams, dropping cached
+   images) cannot fail the import; a failure there is returned as `warnings` in a 200. Timestamps travel as UTC text: export and import both pin their session to `+00:00`.
+
+The response is `{schema, appVersion, backup, rows, imagesDropped, warnings}`. **Images:** the
+images table is wiped and not part of the backup either, so `imagesDropped` counts the records
+lost; every cached image is dropped too (deleting a Project drops its cached images).
+
+An older Bundle loads into the already-migrated tables: columns it lacks take their defaults and
+columns this build dropped are ignored; a `NOT NULL` column without a default that the Bundle lacks
+fails the import before anything is deleted. A future migration that adds one must teach the loader.
+
+**Open connections.** From the backup until the commit, other `/api` requests answer 503 with
+`retry-after` (`/api/health` stays up; so do import, login and logout, while the other admin routes
+also answer 503). The connection pool is never replaced, so no handle goes stale. On commit
+every open Project stream receives `event: reset` and closes; the dashboard reloads, because its
+`seq` may not match the restored event log. Deleting a Project does the same to its streams.
 
 ## Deploy
 

@@ -14,5 +14,9 @@ proxy. Adapt them to your host.
 docker compose -p chronicle --env-file deploy/chronicle.env -f deploy/compose.prod.yml up -d
 ```
 
+`ADMIN_TOKEN` in `chronicle.env` turns on the admin portal at `/admin` (see
+[`docs/usage.md`](../docs/usage.md#admin-portal-and-migrating-hosts)). Pre-import backups land in
+the `backups` volume. The nginx example raises the body limit for `/api/admin/import` only.
+
 Pin a build with `CHRONICLE_TAG=sha-<short>` to roll back. `GET /api/health` answers
 `{"service":"chronicle",...,"db":"ok"}` when the app and database are up.

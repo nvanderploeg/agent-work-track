@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readBody } from '#lib/server/api.ts';
 import { subscribe } from '#lib/server/bus.ts';
 import { PRESETS } from '#lib/server/presets.ts';
 import { resetDb } from '#lib/server/test/db.ts';
@@ -1653,5 +1654,25 @@ describe('review kind', () => {
 			p.writeKey
 		);
 		expect(res.status).toBe(200);
+	});
+});
+
+describe('body size cap', () => {
+	it('refuses a chunked body past the cap without trusting Content-Length', async () => {
+		const chunk = new Uint8Array(1024 * 1024).fill(32);
+		let sent = 0;
+		const body = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				if (sent++ >= 6) controller.close();
+				else controller.enqueue(chunk);
+			}
+		});
+		const request = new Request('http://localhost/x', {
+			method: 'POST',
+			body,
+			duplex: 'half'
+		} as RequestInit);
+
+		await expect(readBody(request)).rejects.toMatchObject({ status: 413 });
 	});
 });

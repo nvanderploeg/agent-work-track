@@ -15,11 +15,14 @@ RUN pnpm --filter web build
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production \
-	PORT=3000
+	PORT=3000 \
+	BODY_SIZE_LIMIT=256M \
+	ADMIN_BACKUP_DIR=/backups
 WORKDIR /app
 COPY --from=build /app/apps/web/package.json ./
 COPY --from=build /app/apps/web/build ./build
 COPY --from=build /app/apps/web/drizzle ./drizzle
+RUN mkdir /backups && chown node /backups
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

@@ -32,8 +32,16 @@ services:
       CHRONICLE_WRITE_WINDOW_MS: ${CHRONICLE_WRITE_WINDOW_MS:-}
       # Set by deploy/nginx; without it every client shares the proxy's write limit.
       ADDRESS_HEADER: x-real-ip
+      # Unset: /admin and its endpoints answer 404.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # One setting sizes the import limit and the node adapter's body limit; keep nginx in step.
+      ADMIN_MAX_BUNDLE_MB: ${ADMIN_MAX_BUNDLE_MB:-256}
+      BODY_SIZE_LIMIT: ${ADMIN_MAX_BUNDLE_MB:-256}M
+    volumes:
+      - backups:/backups
     ports:
       - '127.0.0.1:3280:3000'
 
 volumes:
   mysqldata:
+  backups:

@@ -200,6 +200,14 @@ Writes (🔑) need `Authorization: Bearer <writeKey>` of the project that owns t
 - Every `POST`, `PUT` and `PATCH` under `/api` draws from a token bucket per client address: `CHRONICLE_WRITES_PER_WINDOW` (default 120) at once, refilled at that many per `CHRONICLE_WRITE_WINDOW_MS` (default 300 000); `0` disables it. An empty bucket → 429 `{ error: 'too many writes from this address; retry later' }` with `Retry-After: <whole seconds>`, before the body or key is checked.
 - 401 `{ error: 'missing write key' }` with no bearer token; 403 `{ error: 'invalid write key' }` on mismatch; 404 `{ error: 'project not found' | 'task not found' }`; 400 for malformed ids, paths, or bodies.
 
+## Admin
+
+Not part of the Project API: no Write key. All of it answers 404 when `ADMIN_TOKEN`
+is unset. Sign in at `/admin`, or send `Authorization: Bearer <ADMIN_TOKEN>`; a cookie session
+must send `x-csrf-token` on anything but `GET`. Five failed sign-ins per address lock it out for 15
+minutes (429 with `Retry-After`). Endpoints and the Bundle format are in
+[`usage.md`](usage.md#admin-portal-and-migrating-hosts).
+
 ## Images
 
 - Upload: `thumb` is base64 of a baseline or progressive JPEG at most 256×256 px and 64 KiB; `full`, when given, at most 512×512 px and 192 KiB. Anything else → 400 naming the field. The server never decodes pixels; it reads the size from the JPEG frame header. `review` = `full` was given; `width`/`height` come from `full` when given, else `thumb`. `path` is checked like a Notice's and need not exist.
@@ -218,6 +226,7 @@ Writes (🔑) need `Authorization: Bearer <writeKey>` of the project that owns t
 - Opening: `: ok\n\n` as soon as the stream opens, before any replay.
 - Heartbeat: `: ping\n\n` every `CHRONICLE_HEARTBEAT_MS` (default 25 000).
 - Idle: deadline = max(project `lastWriteAt`, stream open time) + `CHRONICLE_IDLE_MS` (default 14 400 000); each published write resets it. At the deadline send `event: idle\ndata: {}\n\n` and close the stream.
+- Reset: when an admin import or Project deletion replaces the data, send `event: reset\ndata: {}\n\n` and close; the page reloads. While an import runs, other `/api` requests answer 503 with `Retry-After`.
 
 ## Presets
 

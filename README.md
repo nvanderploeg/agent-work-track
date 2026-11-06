@@ -69,6 +69,7 @@ chronicle url "$id"
   discovery, running and deploying the server, simulator, development.
 - [`docs/api.md`](docs/api.md), [`docs/client.md`](docs/client.md), [`docs/ui.md`](docs/ui.md):
   the HTTP, client and dashboard contracts.
+- Admin portal and moving to another host: [`docs/usage.md`](docs/usage.md#admin-portal-and-migrating-hosts).
 - [`deploy/`](deploy/README.md): example production configuration.
 
 ## License

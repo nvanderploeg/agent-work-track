@@ -12,6 +12,14 @@ export interface StreamOptions {
 }
 
 const encoder = new TextEncoder();
+const open = new Map<string, Set<(event: 'idle' | 'reset') => void>>();
+
+/** Ends open streams, of one Project or all, with `event: reset`: a stream's `seq` means nothing once the rows beneath it were replaced. */
+export function endStreams(projectId?: string): void {
+	for (const [id, ends] of [...open]) {
+		if (projectId === undefined || id === projectId) for (const end of [...ends]) end('reset');
+	}
+}
 
 function frame(event: ChronicleEvent): string {
 	return `id: ${event.seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`;
@@ -53,27 +61,28 @@ export async function createProjectStream(
 	function cleanup(reason: 'idle' | 'client' | 'error' = 'client'): void {
 		if (!closed) options.onClose?.(reason);
 		closed = true;
+		open.get(projectId)?.delete(end);
+		if (open.get(projectId)?.size === 0) open.delete(projectId);
 		unsubscribe?.();
 		unsubscribe = undefined;
 		clearTimeout(idleTimer);
 		clearInterval(heartbeatTimer);
 	}
 
+	function end(event: 'idle' | 'reset' = 'idle'): void {
+		if (closed) return;
+		send(`event: ${event}\ndata: {}\n\n`);
+		cleanup('idle');
+		try {
+			controller.close();
+		} catch {
+			// already errored or cancelled
+		}
+	}
+
 	function armIdle(): void {
 		clearTimeout(idleTimer);
-		idleTimer = setTimeout(
-			() => {
-				if (closed) return;
-				send('event: idle\ndata: {}\n\n');
-				cleanup('idle');
-				try {
-					controller.close();
-				} catch {
-					// already errored or cancelled
-				}
-			},
-			Math.max(0, deadline - now())
-		);
+		idleTimer = setTimeout(() => end(), Math.max(0, deadline - now()));
 	}
 
 	function emit(event: ChronicleEvent): void {
@@ -93,6 +102,8 @@ export async function createProjectStream(
 	return new ReadableStream<Uint8Array>({
 		async start(c) {
 			controller = c;
+			if (!open.has(projectId)) open.set(projectId, new Set());
+			open.get(projectId)!.add(end);
 			unsubscribe = subscribe(projectId, onLive);
 			armIdle();
 			send(': ok\n\n');

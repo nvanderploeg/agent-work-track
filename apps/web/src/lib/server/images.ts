@@ -35,6 +35,8 @@ export interface ImageCache {
 	put(entry: Entry, finishedAt: string | null): void;
 	get(id: string, size: ImageSize): Buffer | null;
 	drop(id: string): void;
+	/** Drops every image of a Project, or of all Projects when none is named; returns how many. */
+	clear(projectId?: string): number;
 	observe(event: ChronicleEvent): void;
 	sweep(): void;
 	readonly bytes: number;
@@ -108,6 +110,16 @@ export function createImageCache(options: ImageCacheOptions): ImageCache {
 				return null;
 			}
 			return size === 'thumb' ? entry.thumb : entry.full;
+		},
+		clear(projectId) {
+			let dropped = 0;
+			for (const entry of [...entries.values()]) {
+				if (projectId === undefined || entry.projectId === projectId) {
+					remove(entry, null);
+					dropped++;
+				}
+			}
+			return dropped;
 		},
 		drop(id) {
 			const entry = entries.get(id);
