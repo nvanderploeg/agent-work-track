@@ -20,7 +20,7 @@ WORKDIR /app
 COPY --from=build /app/apps/web/package.json ./
 COPY --from=build /app/apps/web/build ./build
 COPY --from=build /app/apps/web/drizzle ./drizzle
-USER node
+USER 1000:1000
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 	CMD wget -qO- http://127.0.0.1:3000/api/health > /dev/null || exit 1
