@@ -24,6 +24,8 @@
 		"@types/pg-cursor": "^2.7.2",
 		"drizzle-kit": "^0.31.10",
 		"drizzle-orm": "^0.45.2",
+		"firebase": "^13.2.0",
+		"firebase-admin": "^14.5.0",
 		"pg": "^8.23.1",
 		"pg-cursor": "^2.22.1",
 		"svelte": "^5.57.1",
