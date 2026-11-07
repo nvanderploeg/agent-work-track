@@ -1,4 +1,0 @@
-CREATE DATABASE IF NOT EXISTS chronicle_dev;
-CREATE DATABASE IF NOT EXISTS chronicle_test;
-GRANT ALL PRIVILEGES ON `chronicle%`.* TO 'chronicle'@'%';
-FLUSH PRIVILEGES;

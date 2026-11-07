@@ -20,19 +20,18 @@ jobs:
     permissions:
       contents: read
     env:
-      DATABASE_URL: mysql://chronicle:chronicle@127.0.0.1:3316/chronicle_test
+      DATABASE_URL: postgres://chronicle:chronicle@127.0.0.1:5436/chronicle_test
     services:
-      mysql:
-        image: mysql:8.4
+      postgres:
+        image: postgres:17
         env:
-          MYSQL_ROOT_PASSWORD: rootpassword
-          MYSQL_DATABASE: chronicle_test
-          MYSQL_USER: chronicle
-          MYSQL_PASSWORD: chronicle
+          POSTGRES_DB: chronicle_test
+          POSTGRES_USER: chronicle
+          POSTGRES_PASSWORD: chronicle
         ports:
-          - 3316:3306
+          - 5436:5432
         options: >-
-          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -prootpassword --silent"
+          --health-cmd "pg_isready -U chronicle -d chronicle_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20

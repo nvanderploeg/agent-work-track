@@ -380,7 +380,7 @@ describe('import', () => {
 	it('refuses a table it does not know, leaving the data alone', async () => {
 		await seed();
 		const bad = await repack('evil.zip', {
-			[DB_FILE]: `${JSON.stringify({ table: 'mysql.user', columns: ['id'] })}\n["x"]\n`
+			[DB_FILE]: `${JSON.stringify({ table: 'pg_catalog.pg_user', columns: ['id'] })}\n["x"]\n`
 		});
 
 		await rejected(importBundle(bad, { backupDir: dir }), 422, /unexpected table/);

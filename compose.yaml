@@ -1,28 +1,18 @@
 services:
   db:
-    image: mysql:8.4
+    image: postgres:17
     restart: unless-stopped
     ports:
-      - '${MYSQL_PORT:-3316}:3306'
+      - '127.0.0.1:${POSTGRES_PORT:-5436}:5432'
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      MYSQL_DATABASE: chronicle
-      MYSQL_USER: chronicle
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-chronicle}
+      POSTGRES_DB: chronicle
+      POSTGRES_USER: chronicle
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chronicle}
     volumes:
-      - mysqldata:/var/lib/mysql
-      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test:
-        [
-          'CMD',
-          'mysqladmin',
-          'ping',
-          '-h',
-          'localhost',
-          '-uroot',
-          '-p${MYSQL_ROOT_PASSWORD:-rootpassword}'
-        ]
+      test: ['CMD-SHELL', 'pg_isready -U chronicle -d chronicle']
       interval: 5s
       timeout: 5s
       retries: 20
@@ -36,7 +26,7 @@ services:
     ports:
       - '${CHRONICLE_PORT:-3280}:3000'
     environment:
-      DATABASE_URL: mysql://chronicle:${MYSQL_PASSWORD:-chronicle}@db:3306/chronicle
+      DATABASE_URL: postgres://chronicle:${POSTGRES_PASSWORD:-chronicle}@db:5432/chronicle
       ORIGIN: ${CHRONICLE_ORIGIN:-http://localhost:3280}
       # Unset: /admin and its endpoints answer 404.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
@@ -45,5 +35,5 @@ services:
     volumes:
       - backups:/backups
 volumes:
-  mysqldata:
+  pgdata:
   backups:
