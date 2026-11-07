@@ -1,28 +1,10 @@
 services:
-  db:
-    image: postgres:17
-    restart: unless-stopped
-    command: ['postgres', '-c', 'shared_buffers=64MB', '-c', 'max_connections=50']
-    environment:
-      POSTGRES_DB: chronicle
-      POSTGRES_USER: chronicle
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/chronicle.env}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U chronicle -d chronicle']
-      interval: 5s
-      timeout: 5s
-      retries: 30
-
   app:
     image: ghcr.io/nvanderploeg/chronicle:${CHRONICLE_TAG:-latest}
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     environment:
-      DATABASE_URL: postgres://chronicle:${POSTGRES_PASSWORD}@db:5432/chronicle
+      # postgres://user:pw@host:5432/chronicle?sslmode=verify-full; hex password (see deploy/README.md).
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/chronicle.env}
       ORIGIN: ${ORIGIN:?set ORIGIN in deploy/chronicle.env}
       CHRONICLE_IDLE_MS: ${CHRONICLE_IDLE_MS:-}
       CHRONICLE_HEARTBEAT_MS: ${CHRONICLE_HEARTBEAT_MS:-}
@@ -47,5 +29,4 @@ services:
       - '127.0.0.1:3280:3000'
 
 volumes:
-  pgdata:
   backups:
