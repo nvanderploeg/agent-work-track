@@ -1,16 +1,24 @@
-import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '#lib/server/db/index.ts';
-import { apiTokens, deviceCodes } from '#lib/server/db/schema.ts';
+import { deviceCodes } from '#lib/server/db/schema.ts';
 import { resetDb } from '#lib/server/test/db.ts';
+
+const revoked = vi.hoisted(() => [] as string[]);
 
 vi.mock('#lib/server/identity.ts', () => ({
 	SESSION_MAX_AGE_SECONDS: 100,
 	signInEnabled: true,
-	webConfig: () => null,
+	webConfig: () => ({ apiKey: 'web-key', authDomain: 'd', projectId: 'p' }),
 	createSession: async () => {
 		throw new Error('unused');
 	},
+	isIdToken: (value: string | undefined) => value?.startsWith('eyJ.') === true,
+	verifyBearer: async (token: string) =>
+		revoked.includes(token.split('.')[1])
+			? null
+			: { uid: token.split('.')[1], email: null, name: null, picture: null },
+	customTokenFor: async (uid: string) => `custom-for-${uid}`,
+	revokeTools: async (uid: string) => void revoked.push(uid),
 	verifySession: async (cookie: string) =>
 		cookie.startsWith('uid-')
 			? { uid: cookie.slice(4), email: null, name: null, picture: null }
@@ -24,8 +32,7 @@ const { POST: postProject } = await import('../../routes/api/projects/+server.ts
 const { PATCH: patchProject } = await import('../../routes/api/projects/[id]/+server.ts');
 const { POST: postTask } = await import('../../routes/api/projects/[id]/tasks/+server.ts');
 const { DELETE: revokeSelf } = await import('../../routes/api/token/+server.ts');
-const { GET: listTokens } = await import('../../routes/api/me/tokens/+server.ts');
-const { DELETE: revokeOne } = await import('../../routes/api/me/tokens/[id]/+server.ts');
+const { DELETE: revokeTools } = await import('../../routes/api/me/tools/+server.ts');
 const { GET: getProject } = await import('../../routes/api/projects/[id]/+server.ts');
 
 const ORIGIN = 'http://localhost';
@@ -37,11 +44,12 @@ interface Call {
 	body?: unknown;
 	key?: string;
 	params?: Record<string, string>;
+	origin?: string;
 }
 
-function ev({ method = 'GET', path, as, body, key, params = {} }: Call) {
+function ev({ method = 'GET', path, as, body, key, params = {}, origin = ORIGIN }: Call) {
 	const url = new URL(path, ORIGIN);
-	const headers = new Headers({ origin: ORIGIN });
+	const headers = new Headers({ origin });
 	if (as) headers.set('cookie', `runestone_session=uid-${as}`);
 	if (key) headers.set('authorization', `Bearer ${key}`);
 	if (body !== undefined) headers.set('content-type', 'application/json');
@@ -67,16 +75,16 @@ const approve = (userCode: string, as?: string, approved = true) =>
 		ev({ method: 'POST', path: '/api/me/device', as, body: { userCode, approve: approved } })
 	);
 
-async function login(uid = 'alice'): Promise<string> {
-	const device = await start();
-	await approve(device.userCode, uid);
-	return (await json(await poll(device.deviceCode))).token;
-}
+// What a tool holds after trading the custom token at Firebase: an ID token naming the user.
+const idTokenFor = (uid: string) => `eyJ.${uid}.sig`;
 
-beforeEach(resetDb);
+beforeEach(async () => {
+	revoked.length = 0;
+	await resetDb();
+});
 
 describe('device login', () => {
-	it('hands a token to the poller once the user approves while signed in', async () => {
+	it('hands a Firebase custom token to the poller once the user approves while signed in', async () => {
 		const device = await start();
 
 		const waiting = await poll(device.deviceCode);
@@ -89,20 +97,20 @@ describe('device login', () => {
 		expect(waiting.status).toBe(202);
 		expect(anonymous.status).toBe(401);
 		expect(approved.status).toBe(200);
-		const body = await json(done);
-		expect(body.token).toMatch(/^cht_/);
+		expect(await json(done)).toEqual({
+			status: 'approved',
+			customToken: 'custom-for-alice',
+			apiKey: 'web-key'
+		});
 		expect(again.status).toBe(410);
 	});
 
-	it('stores only the token hash, bound to the approving uid', async () => {
-		const token = await login('alice');
+	it('stores no credential: the code row is gone once spent', async () => {
+		const device = await start();
+		await approve(device.userCode, 'alice');
+		await poll(device.deviceCode);
 
-		const [row] = await db.select().from(apiTokens);
-
-		expect(row.ownerUid).toBe('alice');
-		expect(row.label).toBe('my laptop');
-		expect(row.tokenHash).not.toContain(token);
-		expect(JSON.stringify(row)).not.toContain(token);
+		expect(await db.select().from(deviceCodes)).toEqual([]);
 	});
 
 	it('accepts the code as typed, in any case without the dash', async () => {
@@ -147,12 +155,18 @@ describe('device login', () => {
 	});
 });
 
-describe('API tokens', () => {
-	it('create an owned, private Project with no write key', async () => {
-		const token = await login('alice');
+describe('ID token bearers', () => {
+	const create = (key?: string) =>
+		postProject(ev({ method: 'POST', path: '/api/projects', key, body: {} }));
 
+	it('create an owned, private Project with no write key', async () => {
 		const res = await postProject(
-			ev({ method: 'POST', path: '/api/projects', key: token, body: { name: 'Mine' } })
+			ev({
+				method: 'POST',
+				path: '/api/projects',
+				key: idTokenFor('alice'),
+				body: { name: 'Mine' }
+			})
 		);
 		const created = await json(res);
 
@@ -169,11 +183,7 @@ describe('API tokens', () => {
 	});
 
 	it("write to their owner's Projects only", async () => {
-		const alice = await login('alice');
-		const bob = await login('bob');
-		const { id } = await json(
-			await postProject(ev({ method: 'POST', path: '/api/projects', key: alice, body: {} }))
-		);
+		const { id } = await json(await create(idTokenFor('alice')));
 		const write = (key?: string) =>
 			postTask(
 				ev({
@@ -185,25 +195,20 @@ describe('API tokens', () => {
 				})
 			);
 
-		expect((await write(alice)).status).toBe(201);
-		expect((await write(bob)).status).toBe(403);
+		expect((await write(idTokenFor('alice'))).status).toBe(201);
+		expect((await write(idTokenFor('bob'))).status).toBe(403);
 		expect((await write()).status).toBe(401);
 		expect((await write('ws_made-up-write-key')).status).toBe(401);
 	});
 
 	it('are refused outright when invalid, never downgraded to an anonymous Project', async () => {
-		const res = await postProject(
-			ev({ method: 'POST', path: '/api/projects', key: 'cht_not-a-real-token', body: {} })
-		);
+		revoked.push('alice');
 
-		expect(res.status).toBe(403);
+		expect((await create(idTokenFor('alice'))).status).toBe(403);
 	});
 
 	it('leave anonymous Projects on their write key', async () => {
-		const token = await login('alice');
-		const created = await json(
-			await postProject(ev({ method: 'POST', path: '/api/projects', body: {} }))
-		);
+		const created = await json(await create());
 		const rename = (key: string) =>
 			patchProject(
 				ev({
@@ -216,52 +221,27 @@ describe('API tokens', () => {
 			);
 
 		expect((await rename(created.writeKey)).status).toBe(200);
-		expect((await rename(token)).status).toBe(403);
+		expect((await rename(idTokenFor('alice'))).status).toBe(403);
 	});
 
-	it('stop working once revoked by the owner, the token itself, or neither twice', async () => {
-		const first = await login('alice');
-		const second = await login('alice');
-		const open = (key: string) =>
-			postProject(ev({ method: 'POST', path: '/api/projects', key, body: {} }));
-
-		const self = await revokeSelf(ev({ method: 'DELETE', path: '/api/token', key: first }));
-		const listed = await json(await listTokens(ev({ path: '/api/me/tokens', as: 'alice' })));
-		const byOwner = await revokeOne(
-			ev({
-				method: 'DELETE',
-				path: `/api/me/tokens/${listed.tokens[0].id}`,
-				as: 'alice',
-				params: { id: listed.tokens[0].id }
-			})
+	it('stop working once the user revokes their tools, by token or from the profile', async () => {
+		const byTool = await revokeSelf(
+			ev({ method: 'DELETE', path: '/api/token', key: idTokenFor('alice') })
 		);
-		const repeat = await revokeOne(
-			ev({
-				method: 'DELETE',
-				path: `/api/me/tokens/${listed.tokens[0].id}`,
-				as: 'alice',
-				params: { id: listed.tokens[0].id }
-			})
-		);
+		const byProfile = await revokeTools(ev({ method: 'DELETE', path: '/api/me/tools', as: 'bob' }));
 
-		expect(self.status).toBe(200);
-		expect(listed.tokens).toHaveLength(1);
-		expect(byOwner.status).toBe(200);
-		expect(repeat.status).toBe(404);
-		expect((await open(first)).status).toBe(403);
-		expect((await open(second)).status).toBe(403);
+		expect([byTool.status, byProfile.status]).toEqual([200, 200]);
+		expect(revoked).toEqual(['alice', 'bob']);
+		expect((await create(idTokenFor('alice'))).status).toBe(403);
 	});
 
-	it('cannot be revoked by another user', async () => {
-		await login('alice');
-		const [row] = await db.select().from(apiTokens);
-
-		const res = await revokeOne(
-			ev({ method: 'DELETE', path: `/api/me/tokens/${row.id}`, as: 'bob', params: { id: row.id } })
+	it('cannot revoke tools without a session or from another origin', async () => {
+		const anonymous = await revokeTools(ev({ method: 'DELETE', path: '/api/me/tools' }));
+		const cross = await revokeTools(
+			ev({ method: 'DELETE', path: '/api/me/tools', as: 'bob', origin: 'https://evil.test' })
 		);
 
-		expect(res.status).toBe(404);
-		const [after] = await db.select().from(apiTokens).where(eq(apiTokens.id, row.id));
-		expect(after.revokedAt).toBeNull();
+		expect([anonymous.status, cross.status]).toEqual([401, 403]);
+		expect(revoked).toEqual([]);
 	});
 });

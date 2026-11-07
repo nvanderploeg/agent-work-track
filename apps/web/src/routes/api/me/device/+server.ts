@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import { ApiError, readBody, route } from '#lib/server/api.ts';
-import { answerDevice, deviceByUserCode } from '#lib/server/tokens.ts';
+import { answerDevice, deviceByUserCode } from '#lib/server/device.ts';
 import { requireSameOrigin, requireViewer } from '#lib/server/viewer.ts';
 
 export const GET: RequestHandler = route(async ({ request, url }) => {

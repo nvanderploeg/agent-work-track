@@ -2,12 +2,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, isNull, lt, sql } from 'drizzle-orm';
 import { ApiError } from '#lib/server/api.ts';
 import { db } from '#lib/server/db/index.ts';
-import { apiTokens, deviceCodes } from '#lib/server/db/schema.ts';
+import { deviceCodes } from '#lib/server/db/schema.ts';
+import { customTokenFor, isIdToken, verifyBearer, type Viewer } from '#lib/server/identity.ts';
+import { recordUser } from '#lib/server/users.ts';
 
-export const TOKEN_PREFIX = 'cht_';
 export const DEVICE_TTL_MS = 10 * 60 * 1000;
 export const DEVICE_POLL_SECONDS = 3;
-const TOUCH_AFTER_MS = 60_000;
 // No 0/O/1/I: a user code is read off one screen and typed into another.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -17,65 +17,21 @@ export function bearer(request: Request): string | undefined {
 	return /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '')?.[1];
 }
 
-export const isApiToken = (value: string | undefined): value is string =>
-	value?.startsWith(TOKEN_PREFIX) === true;
-
-/** The uid a live token belongs to, or undefined when it is unknown or revoked. */
-export async function ownerOfToken(
-	token: string
-): Promise<{ id: string; uid: string } | undefined> {
-	const [row] = await db
-		.select()
-		.from(apiTokens)
-		.where(and(eq(apiTokens.tokenHash, sha256(token)), isNull(apiTokens.revokedAt)));
-	if (!row) return undefined;
-	if (!row.lastUsedAt || Date.now() - row.lastUsedAt.getTime() > TOUCH_AFTER_MS) {
-		await db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.id));
-	}
-	return { id: row.id, uid: row.ownerUid };
-}
-
-/** Like `ownerOfToken`, for a request that must carry one. */
-export async function requireToken(request: Request): Promise<{ id: string; uid: string }> {
+/** The user behind a request's Firebase ID token bearer, or null when it carries none that verifies. */
+export async function bearerUser(request: Request): Promise<Viewer | null> {
 	const token = bearer(request);
-	if (!isApiToken(token)) throw new ApiError(401, 'missing token');
-	const owner = await ownerOfToken(token);
-	if (!owner) throw new ApiError(403, 'invalid token');
-	return owner;
+	if (!isIdToken(token)) return null;
+	const viewer = await verifyBearer(token);
+	if (viewer) await recordUser(viewer);
+	return viewer;
 }
 
-export async function mintToken(uid: string, label: string): Promise<string> {
-	const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
-	await db.insert(apiTokens).values({
-		id: crypto.randomUUID(),
-		ownerUid: uid,
-		tokenHash: sha256(token),
-		label
-	});
-	return token;
-}
-
-export async function listTokens(uid: string) {
-	return db
-		.select({
-			id: apiTokens.id,
-			label: apiTokens.label,
-			createdAt: apiTokens.createdAt,
-			lastUsedAt: apiTokens.lastUsedAt
-		})
-		.from(apiTokens)
-		.where(and(eq(apiTokens.ownerUid, uid), isNull(apiTokens.revokedAt)))
-		.orderBy(apiTokens.createdAt);
-}
-
-/** True when a live token of `uid` was revoked. */
-export async function revokeToken(uid: string, id: string): Promise<boolean> {
-	const rows = await db
-		.update(apiTokens)
-		.set({ revokedAt: new Date() })
-		.where(and(eq(apiTokens.id, id), eq(apiTokens.ownerUid, uid), isNull(apiTokens.revokedAt)))
-		.returning({ id: apiTokens.id });
-	return rows.length > 0;
+/** Like `bearerUser`, for a request that must carry one. */
+export async function requireBearerUser(request: Request): Promise<Viewer> {
+	if (!isIdToken(bearer(request))) throw new ApiError(401, 'missing token');
+	const viewer = await bearerUser(request);
+	if (!viewer) throw new ApiError(403, 'invalid token');
+	return viewer;
 }
 
 function newUserCode(): string {
@@ -134,9 +90,9 @@ export async function answerDevice(userCode: string, uid: string | null): Promis
 }
 
 export type DevicePoll =
-	{ status: 'pending' } | { status: 'gone' } | { status: 'approved'; token: string };
+	{ status: 'pending' } | { status: 'gone' } | { status: 'approved'; customToken: string };
 
-/** An approved code is spent by the poll that sees it: it mints the token and removes the row. */
+/** An approved code is spent by the poll that sees it: it mints the custom token and removes the row. */
 export async function pollDevice(deviceCode: string): Promise<DevicePoll> {
 	const hash = sha256(deviceCode);
 	const [row] = await db.select().from(deviceCodes).where(eq(deviceCodes.deviceHash, hash));
@@ -145,7 +101,7 @@ export async function pollDevice(deviceCode: string): Promise<DevicePoll> {
 	const spent = await db
 		.delete(deviceCodes)
 		.where(eq(deviceCodes.deviceHash, hash))
-		.returning({ label: deviceCodes.label });
+		.returning({ hash: deviceCodes.deviceHash });
 	if (!spent.length) return { status: 'gone' };
-	return { status: 'approved', token: await mintToken(row.ownerUid, spent[0].label) };
+	return { status: 'approved', customToken: await customTokenFor(row.ownerUid) };
 }

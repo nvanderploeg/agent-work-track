@@ -134,20 +134,6 @@ export const events = pgTable(
 	]
 );
 
-export const apiTokens = pgTable(
-	'api_tokens',
-	{
-		id: varchar('id', { length: 36 }).primaryKey(),
-		ownerUid: varchar('owner_uid', { length: 128 }).notNull(),
-		tokenHash: char('token_hash', { length: 64 }).notNull().unique(),
-		label: varchar('label', { length: 100 }).notNull(),
-		createdAt: now('created_at'),
-		lastUsedAt: instant('last_used_at'),
-		revokedAt: instant('revoked_at')
-	},
-	(table) => [index('api_tokens_owner_idx').on(table.ownerUid)]
-);
-
 // A pending device login. Never in a Bundle: it lives minutes and holds no data worth moving.
 export const deviceCodes = pgTable('device_codes', {
 	deviceHash: char('device_hash', { length: 64 }).primaryKey(),

@@ -101,3 +101,35 @@ export async function verifySession(cookie: string): Promise<Viewer | null> {
 		return null;
 	}
 }
+
+const ID_TOKEN = /^eyJ[\w-]*\.[\w-]+\.[\w-]*$/;
+
+/** True for a Firebase ID token, which is how a tool authenticates; a write key never has this shape. */
+export const isIdToken = (value: string | undefined): value is string =>
+	value !== undefined && ID_TOKEN.test(value);
+
+/** The user an ID token names, or null when it is forged, expired or its refresh tokens were revoked. */
+export async function verifyBearer(idToken: string): Promise<Viewer | null> {
+	if (!signInEnabled) return null;
+	try {
+		return toViewer(await getAuth(admin()).verifyIdToken(idToken, true));
+	} catch (error) {
+		const code = (error as { code?: unknown }).code;
+		if (typeof code !== 'string' || !code.startsWith('auth/')) {
+			log('identity.error', { error: (error as Error).message });
+		}
+		return null;
+	}
+}
+
+/** A one-hour token the tool trades for a refresh token at Firebase. */
+export async function customTokenFor(uid: string): Promise<string> {
+	if (!signInEnabled) throw new ApiError(503, 'sign-in is not configured');
+	return getAuth(admin()).createCustomToken(uid);
+}
+
+/** Invalidates every refresh token of the user: each connected tool must log in again. */
+export async function revokeTools(uid: string): Promise<void> {
+	if (!signInEnabled) throw new ApiError(503, 'sign-in is not configured');
+	await getAuth(admin()).revokeRefreshTokens(uid);
+}

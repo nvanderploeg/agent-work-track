@@ -14,6 +14,13 @@ vi.mock('#lib/server/identity.ts', () => ({
 		cookie: `uid-${token}`,
 		viewer: { uid: token, email: null, name: null, picture: null }
 	}),
+	isIdToken: (value: string | undefined) => value?.startsWith('eyJ.') === true,
+	verifyBearer: async (token: string) => ({
+		uid: token.split('.')[1],
+		email: null,
+		name: null,
+		picture: null
+	}),
 	verifySession: async (cookie: string) => {
 		verify(cookie);
 		return cookie.startsWith('uid-')
@@ -23,7 +30,6 @@ vi.mock('#lib/server/identity.ts', () => ({
 }));
 
 const { createProjectStream } = await import('./stream.ts');
-const { mintToken } = await import('./tokens.ts');
 const { sessionCookieHeader } = await import('./viewer.ts');
 const { POST: postProject } = await import('../../routes/api/projects/+server.ts');
 const { GET: getProject, PATCH: patchProject } =
@@ -79,13 +85,13 @@ function ev({ method = 'GET', path, as, body, key, params = {}, origin = ORIGIN 
 
 const json = async (response: Response) => response.json() as Promise<Record<string, any>>;
 
-// An owned Project is written with its owner's API token; `token` is for its writes.
+// An owned Project is written with its owner's Firebase ID token; `token` is for its writes.
 async function ownedProject(owner = 'alice') {
 	const res = await createMine(
 		ev({ method: 'POST', path: '/api/me/projects', as: owner, body: {} })
 	);
 	const { id } = await json(res);
-	return { id: id as string, token: await mintToken(owner, 'test') };
+	return { id: id as string, token: `eyJ.${owner}.sig` };
 }
 
 async function task(project: { id: string; token: string }, title = 'T') {
@@ -187,7 +193,7 @@ describe('owned Projects', () => {
 		expect(((await page('alice')) as any).snapshot.project.id).toBe(id);
 	});
 
-	it("accept their owner's API token for writes", async () => {
+	it("accept their owner's ID token for writes", async () => {
 		const project = await ownedProject();
 
 		const res = await patchProject(

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ApiError } from '#lib/server/api.ts';
-import { requireToken } from '#lib/server/tokens.ts';
+import { requireBearerUser } from '#lib/server/device.ts';
 import { getProjectRow, getTaskRow, type ProjectRow, type TaskRow } from '#lib/server/store.ts';
 
 export function generateWriteKey(): string {
@@ -26,7 +26,7 @@ export async function authorizeProject(request: Request, projectId: string): Pro
 	if (!project) throw new ApiError(404, 'project not found');
 	if (project.ownerUid === null) {
 		checkKey(request, project);
-	} else if ((await requireToken(request)).uid !== project.ownerUid) {
+	} else if ((await requireBearerUser(request)).uid !== project.ownerUid) {
 		throw new ApiError(403, 'token does not own this project');
 	}
 	return project;

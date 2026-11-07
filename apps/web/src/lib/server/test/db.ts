@@ -2,7 +2,6 @@ import { DATABASE_URL } from '$app/env/private';
 import { forgetUsers } from '#lib/server/users.ts';
 import { db } from '#lib/server/db/index.ts';
 import {
-	apiTokens,
 	deviceCodes,
 	events,
 	images,
@@ -24,7 +23,6 @@ export async function resetDb(): Promise<void> {
 	await db.delete(nodes);
 	await db.delete(tasks);
 	await db.delete(projects);
-	await db.delete(apiTokens);
 	await db.delete(deviceCodes);
 	await db.delete(users);
 	forgetUsers();

@@ -1,10 +1,10 @@
 import type { RequestHandler } from './$types';
 import { route } from '#lib/server/api.ts';
-import { requireToken, revokeToken } from '#lib/server/tokens.ts';
+import { requireBearerUser } from '#lib/server/device.ts';
+import { revokeTools } from '#lib/server/identity.ts';
 
-/** A token revokes itself: what `chronicle logout` calls. */
+/** Signs every tool of this user out: what `chronicle logout` calls. */
 export const DELETE: RequestHandler = route(async ({ request }) => {
-	const owner = await requireToken(request);
-	await revokeToken(owner.uid, owner.id);
+	await revokeTools((await requireBearerUser(request)).uid);
 	return Response.json({ ok: true });
 });

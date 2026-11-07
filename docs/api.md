@@ -214,8 +214,8 @@ verifies it on each request; the browser SDK's own state is discarded. Sign-in i
 endpoints below answer as signed out, `POST /api/session` 503) until `FIREBASE_API_KEY` and a
 service account are configured; see [`usage.md`](usage.md#run-the-server).
 
-Anonymous use is unchanged: `POST /api/projects` still makes an anonymous, public Project and a
-write key.
+Anonymous use is unchanged: `POST /api/projects` without a token still makes an anonymous, public
+Project and a write key.
 
 | Method | Path                    | Body                      | Success                                                                      |
 | ------ | ----------------------- | ------------------------- | ---------------------------------------------------------------------------- |
@@ -223,7 +223,7 @@ write key.
 | POST   | `/api/session`          | `{ idToken }`             | 200 `{ user }` and `Set-Cookie`. 401 for an invalid ID token or one whose sign-in is over 5 minutes old |
 | DELETE | `/api/session`          | —                         | 200 `{ ok: true }` and a cookie that expires                                 |
 | GET    | `/api/me/projects`      | —                         | 200 `{ projects: { project, tasks }[] }`, the signed-in user's, newest write first |
-| POST   | `/api/me/projects`      | as `POST /api/projects`   | 201 as `POST /api/projects`: an owned, private Project. Its write key still works |
+| POST   | `/api/me/projects`      | as `POST /api/projects`   | 201 `{ id, name, url, config }`: an owned, private Project; no write key is issued |
 | PATCH  | `/api/me/projects/:id`  | `{ public: boolean }`     | 200 `{ project }`; 404 unless the caller owns it                             |
 | PATCH  | `/api/me/tasks/:taskId` | `{ public: boolean }`     | 200 `{ task }`; 404 unless the caller owns its Project                       |
 
@@ -240,7 +240,32 @@ Read rules, for every read route (`GET /api/projects/:id`, `/stream`, `GET /api/
   streams only that Task's events and Config changes.
 - Making a Project or Task private ends its open streams with `reset`.
 
-Writes to a Project still need its write key; the session grants visibility control, not writes.
+Writes: an anonymous Project takes its write key; an owned Project takes a **Firebase ID token** of
+its owner as `Authorization: Bearer <idToken>` (401 `missing token`, 403 `invalid token` or `token
+does not own this project`). The server verifies it with revocation checked. The session cookie
+grants visibility control, not writes. `POST /api/projects` with an ID token makes an owned, private
+Project (no `writeKey` in the reply); an ID token that does not verify is 403, never an anonymous
+Project. A bearer that is not a JWT is a write key.
+
+### Device login
+
+How a tool (the MCP server, the CLI) gets that credential, without a per-app secret: it asks for a
+code, the signed-in user approves it, and the poll hands back a Firebase **custom token**. The tool
+trades it at Firebase (`accounts:signInWithCustomToken` with the `apiKey` below) for a refresh
+token, keeps that, and sends ID tokens minted from it (`securetoken.googleapis.com/v1/token`).
+
+| Method | Path                   | Body                       | Success                                                                                                                  |
+| ------ | ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| POST   | `/api/device`          | `{ label? }` (≤ 100 chars) | 201 `{ deviceCode, userCode, verificationUrl, expiresIn, interval }`; the code lives 10 minutes                          |
+| GET    | `/api/device`          | bearer `<deviceCode>`      | 202 `{ status: 'pending' }`; 200 `{ status: 'approved', customToken, apiKey }` once, then 410; 410 expired, denied or unknown |
+| GET    | `/api/me/device?code=` | —                          | 200 `{ label, expiresAt }` for a pending code; 404 otherwise                                                             |
+| POST   | `/api/me/device`       | `{ userCode, approve }`    | 200 `{ ok: true }`; 404 when no pending code matches. Denying deletes the code                                           |
+| DELETE | `/api/me/tools`        | —                          | 200 `{ ok: true }`: revokes the user's Firebase refresh tokens, signing out every tool                                   |
+| DELETE | `/api/token`           | bearer ID token            | 200 `{ ok: true }`: the same, called by a tool (`chronicle logout`)                                                      |
+
+The user approves at `/device?code=<userCode>` (signed in); `userCode` is `XXXX-XXXX` and is matched
+ignoring case and the dash. Revocation is per user, not per tool: it also ends the user's tools in
+the other apps that share the Firebase project, and takes effect at the next request.
 
 ## Admin
 

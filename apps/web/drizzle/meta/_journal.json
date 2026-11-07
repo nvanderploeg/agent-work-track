@@ -29,6 +29,13 @@
       "when": 1794056911365,
       "tag": "0003_users",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794057126954,
+      "tag": "0004_drop_api_tokens",
+      "breakpoints": true
     }
   ]
 }

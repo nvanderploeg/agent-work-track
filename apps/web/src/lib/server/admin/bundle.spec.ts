@@ -12,15 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DATABASE_URL } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
 import { db, pool } from '#lib/server/db/index.ts';
-import {
-	apiTokens,
-	events,
-	images,
-	nodes,
-	notices,
-	projects,
-	tasks
-} from '#lib/server/db/schema.ts';
+import { events, images, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
 import { trackRequest } from '#lib/server/inflight.ts';
 import { createProjectStream, endStreams } from '#lib/server/stream.ts';
 import { resetDb } from '#lib/server/test/db.ts';
@@ -828,20 +820,7 @@ describe('import of a MySQL-era bundle', () => {
 					}
 					return JSON.stringify(parsed);
 				})
-				.join('\n') +
-			'\n' +
-			`${JSON.stringify({
-				table: 'api_tokens',
-				columns: [
-					'id',
-					'owner_uid',
-					'token_hash',
-					'label',
-					'created_at',
-					'last_used_at',
-					'revoked_at'
-				]
-			})}\n`
+				.join('\n') + '\n'
 		);
 	};
 
@@ -981,27 +960,6 @@ describe('ownership and visibility', () => {
 		const [project] = await db.select().from(projects);
 		const [task] = await db.select().from(tasks);
 		expect([project.ownerUid, project.public, task.public]).toEqual([OWNER, false, true]);
-	});
-
-	it('carries API tokens, revoked or not, as hashes', async () => {
-		await db.insert(apiTokens).values({
-			id: '33333333-3333-4333-8333-333333333333',
-			ownerUid: OWNER,
-			tokenHash: WRITE_KEY_HASH,
-			label: 'laptop',
-			revokedAt: new Date('2026-01-02T03:04:05.678Z')
-		});
-		const bundle = await exportTo();
-		await resetDb();
-
-		await importBundle(bundle, { backupDir: dir, allowEmpty: true });
-
-		const [token] = await db.select().from(apiTokens);
-		expect([token.ownerUid, token.tokenHash, token.revokedAt?.toISOString()]).toEqual([
-			OWNER,
-			WRITE_KEY_HASH,
-			'2026-01-02T03:04:05.678Z'
-		]);
 	});
 
 	it('imports a Bundle from before ownership as anonymous public Projects', async () => {

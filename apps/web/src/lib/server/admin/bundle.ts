@@ -11,7 +11,7 @@ import Cursor from 'pg-cursor';
 import { ADMIN_BACKUP_DIR, ADMIN_MAX_UNPACKED_MB } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
 import { pool } from '#lib/server/db/index.ts';
-import { apiTokens, events, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
+import { events, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
 import { log } from '#lib/server/log.ts';
 import { drainRequests } from '#lib/server/inflight.ts';
 import { imageCache } from '#lib/server/images.ts';
@@ -60,21 +60,9 @@ export const BUNDLE_TABLES: Record<string, PgTable> = {
 	tasks,
 	nodes,
 	notices,
-	events,
-	api_tokens: apiTokens
+	events
 };
-const WIPE_ORDER = [
-	'events',
-	'images',
-	'notices',
-	'nodes',
-	'tasks',
-	'projects',
-	'api_tokens',
-	'device_codes'
-];
-// Tables a Bundle from an older build may lack; importing it leaves them empty.
-const OPTIONAL_TABLES = new Set(['api_tokens']);
+const WIPE_ORDER = ['events', 'images', 'notices', 'nodes', 'tasks', 'projects', 'device_codes'];
 
 export interface Manifest {
 	format: number;
@@ -433,9 +421,7 @@ async function scanDatabase(path: string, entry: ZipEntry, allowEmpty: boolean):
 		rows[table.name]++;
 	}
 	for (const name of Object.keys(BUNDLE_TABLES)) {
-		if (!(name in rows) && !OPTIONAL_TABLES.has(name)) {
-			refuse(`bundle rejected: db.ndjson has no ${name} table`);
-		}
+		if (!(name in rows)) refuse(`bundle rejected: db.ndjson has no ${name} table`);
 	}
 	if (rows.projects === 0 && !allowEmpty) {
 		refuse('bundle rejected: it holds no Projects; pass allow-empty=1 to wipe the server', 422);

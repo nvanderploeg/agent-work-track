@@ -7,7 +7,8 @@ import {
 	DEVICE_TTL_MS,
 	pollDevice,
 	startDevice
-} from '#lib/server/tokens.ts';
+} from '#lib/server/device.ts';
+import { webConfig } from '#lib/server/identity.ts';
 
 const noStore = { 'cache-control': 'no-store' };
 
@@ -40,5 +41,9 @@ export const GET: RequestHandler = route(async ({ request }) => {
 	if (result.status === 'pending') {
 		return Response.json({ status: 'pending' }, { status: 202, headers: noStore });
 	}
-	return Response.json({ status: 'approved', token: result.token }, { headers: noStore });
+	// The tool trades the custom token for a refresh token at Firebase, with this web API key.
+	return Response.json(
+		{ status: 'approved', customToken: result.customToken, apiKey: webConfig()?.apiKey },
+		{ headers: noStore }
+	);
 });

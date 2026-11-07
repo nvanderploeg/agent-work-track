@@ -15,9 +15,6 @@
 	let name = $state('');
 	let message = $state('');
 	let failed = $state(false);
-	let tokens = $state<
-		{ id: string; label: string; createdAt: string; lastUsedAt: string | null }[]
-	>([]);
 
 	function report(text: string, bad: boolean) {
 		message = text;
@@ -27,8 +24,6 @@
 	async function load() {
 		const res = await fetch('/api/me/projects');
 		if (res.ok) owned = (await res.json()).projects;
-		const found = await fetch('/api/me/tokens');
-		if (found.ok) tokens = (await found.json()).tokens;
 		loaded = true;
 	}
 
@@ -56,9 +51,9 @@
 		entry.tasks = entry.tasks.map((t) => (t.id === updated.id ? updated : t));
 	}
 
-	async function revoke(id: string) {
-		const res = await send(`/api/me/tokens/${id}`, 'DELETE', undefined);
-		if (res.ok) tokens = tokens.filter((t) => t.id !== id);
+	async function disconnectTools() {
+		const res = await send('/api/me/tools', 'DELETE', undefined);
+		if (res.ok) report('Every connected tool was signed out.', false);
 	}
 
 	async function create(event: SubmitEvent) {
@@ -168,28 +163,14 @@
 		<section aria-labelledby="tools" class="space-y-3">
 			<h2 id="tools" class="text-lg font-semibold">Connected tools</h2>
 			<p class="text-sm text-(--muted)">
-				Tools write to your projects with a token you approve. Run <code>chronicle login</code> in a terminal
-				to connect one.
+				Run <code>chronicle login</code> in a terminal to connect a tool. Tools write to your projects
+				as you until you disconnect them.
 			</p>
-			{#each tokens as token (token.id)}
-				<div
-					class="flex items-baseline justify-between gap-4 rounded border border-(--line) bg-(--surface) p-3 text-sm"
-					data-testid="token"
-				>
-					<span>
-						{token.label}
-						<span class="text-(--muted)">
-							· connected {new Date(token.createdAt).toLocaleDateString()}
-							{#if token.lastUsedAt}· used {new Date(token.lastUsedAt).toLocaleString()}{/if}
-						</span>
-					</span>
-					<button class="text-(--removed)" onclick={() => revoke(token.id)} data-testid="revoke"
-						>Revoke</button
-					>
-				</div>
-			{:else}
-				<p class="text-(--muted)" data-testid="no-tokens">No tools connected.</p>
-			{/each}
+			<button
+				class="rounded border border-(--line) px-3 py-1 text-(--removed)"
+				onclick={disconnectTools}
+				data-testid="disconnect-tools">Disconnect all tools</button
+			>
 		</section>
 	{/if}
 </PlainPage>

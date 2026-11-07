@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const auth = vi.hoisted(() => ({
 	verifyIdToken: vi.fn(),
 	createSessionCookie: vi.fn(),
-	verifySessionCookie: vi.fn()
+	verifySessionCookie: vi.fn(),
+	createCustomToken: vi.fn(),
+	revokeRefreshTokens: vi.fn()
 }));
 
 vi.mock('firebase-admin/app', () => ({
@@ -13,7 +15,15 @@ vi.mock('firebase-admin/app', () => ({
 }));
 vi.mock('firebase-admin/auth', () => ({ getAuth: () => auth }));
 
-const { createSession, verifySession, webConfig } = await import('./identity.ts');
+const {
+	createSession,
+	customTokenFor,
+	isIdToken,
+	revokeTools,
+	verifyBearer,
+	verifySession,
+	webConfig
+} = await import('./identity.ts');
 
 const claims = (authTime: number) => ({
 	uid: 'u1',
@@ -78,6 +88,44 @@ describe('verifySession', () => {
 		);
 
 		expect(await verifySession('c')).toBeNull();
+	});
+});
+
+describe('verifyBearer', () => {
+	it('checks revocation, so a revoked tool stops at once', async () => {
+		auth.verifyIdToken.mockResolvedValue({ uid: 'u3' });
+
+		expect((await verifyBearer('t'))?.uid).toBe('u3');
+		expect(auth.verifyIdToken).toHaveBeenCalledWith('t', true);
+	});
+
+	it('is null for a token Firebase refuses', async () => {
+		auth.verifyIdToken.mockRejectedValue(
+			Object.assign(new Error('revoked'), { code: 'auth/id-token-revoked' })
+		);
+
+		expect(await verifyBearer('t')).toBeNull();
+	});
+
+	it('tells an ID token from a write key', () => {
+		expect(isIdToken('eyJhbGciOi.eyJ1aWQiOiJ4In0.c2ln')).toBe(true);
+		expect(isIdToken('ws_abc-def')).toBe(false);
+		expect(isIdToken(undefined)).toBe(false);
+	});
+});
+
+describe('tools', () => {
+	it('mint a custom token for the approving user', async () => {
+		auth.createCustomToken.mockResolvedValue('custom');
+
+		expect(await customTokenFor('u4')).toBe('custom');
+		expect(auth.createCustomToken).toHaveBeenCalledWith('u4');
+	});
+
+	it("are all disconnected by revoking the user's refresh tokens", async () => {
+		await revokeTools('u5');
+
+		expect(auth.revokeRefreshTokens).toHaveBeenCalledWith('u5');
 	});
 });
 

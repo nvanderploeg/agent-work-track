@@ -121,7 +121,15 @@ export interface ChronicleClient {
 	}): Promise<Result<{ config: ProjectConfig; projectUrl: string }>>; // neither → read current config
 	projectUrl(input: { taskId?: string; cwd?: string }): Promise<Result<{ url: string }>>;
 	doctor(input?: { cwd?: string }): Promise<DoctorReport>;
+	// Device login (docs/api.md § Device login): shows a code via onCode, waits for approval,
+	// stores a Firebase refresh token in <configDir>/tokens.json (mode 0600).
+	login(input?: { label?: string; onCode?: (code: LoginCode) => void }): Promise<Result<{ server: string }>>;
+	// DELETE /api/token (signs the user's tools out), then forgets the local credential.
+	logout(): Promise<Result<{ server: string; revoked: boolean }>>;
 }
+
+// With a stored credential the client sends a refreshed Firebase ID token as the bearer for owned
+// Projects, and creates Projects owned by the user; an owned Project's Registry entry has an empty writeKey.
 
 export function createClient(options?: ClientOptions): ChronicleClient;
 export function repoIdentity(cwd: string): Promise<{ repoKey: string; name: string }>;
@@ -172,6 +180,10 @@ chronicle url [taskId] [--cwd dir]
     stdout: the task URL with a taskId, else the project URL
 chronicle doctor [--cwd dir]
     stdout: human-readable DoctorReport
+chronicle login [--label name]
+    prints `Open <url> and approve code <code>`, waits for approval; stdout `logged in to <server>`
+chronicle logout
+    stdout `logged out of <server>` (or `logged out locally; … was unreachable`)
 chronicle hook
     reads one Claude Code hook event on stdin; stdout: hook JSON or nothing; always exit 0
 ```
@@ -198,6 +210,8 @@ chronicle hook
 | `add_notice`  | `{ taskId, kind: 'assumption' \| 'caveat', text, path? }`              | `addNotice`  |
 | `add_image`   | `{ taskId, file, path?, caption?, review? }`                          | `addImage`   |
 | `get_task`    | `{ taskId }`                                                          | `getTask`    |
+| `login`       | `{ label? }`; returns the approval url and code at once, completes in the background | `login`      |
+| `logout`      | `{}`                                                                  | `logout`     |
 | `configure`   | `{ taskId?, cwd?, config?: ProjectConfig, patch?: ConfigPatch }`      | `configure`  |
 
 - `ok: true` → one text content item, `JSON.stringify(value)`.
