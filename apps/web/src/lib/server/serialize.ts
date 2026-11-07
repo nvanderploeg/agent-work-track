@@ -30,6 +30,8 @@ export function toProject(row: ProjectRow): Project {
 		notes: row.notes ?? '',
 		links: (row.links as Link[] | null) ?? [],
 		config: row.config as ProjectConfig,
+		owned: row.ownerUid !== null,
+		public: row.ownerUid === null || row.public,
 		createdAt: iso(row.createdAt),
 		lastWriteAt: iso(row.lastWriteAt)
 	};
@@ -46,6 +48,7 @@ export function toTask(row: TaskRow): Task {
 		agent: (row.agent as AgentInfo | null) ?? null,
 		links: (row.links as Link[] | null) ?? [],
 		prs: (row.prs as PullRequest[] | null) ?? [],
+		public: row.public,
 		repo: row.repo ?? null,
 		branch: row.branch ?? null,
 		createdAt: iso(row.createdAt),

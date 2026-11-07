@@ -801,13 +801,36 @@ describe('import of a MySQL-era bundle', () => {
 		expect(next.seq).toBeGreaterThan(42);
 	});
 
+	// What this build writes for a MySQL-era bundle: the columns it lacked take their defaults.
+	const currentShape = (text: string) => {
+		let table = '';
+		return (
+			text
+				.split('\n')
+				.filter(Boolean)
+				.map((line) => {
+					const parsed = JSON.parse(line);
+					if (!Array.isArray(parsed)) {
+						table = parsed.table;
+						if (table === 'projects') parsed.columns.splice(6, 0, 'owner_uid', 'public');
+						if (table === 'tasks') parsed.columns.splice(9, 0, 'public');
+					} else {
+						if (table === 'projects') parsed.splice(6, 0, null, true);
+						if (table === 'tasks') parsed.splice(9, 0, false);
+					}
+					return JSON.stringify(parsed);
+				})
+				.join('\n') + '\n'
+		);
+	};
+
 	it('exports what it imported byte for byte', async () => {
 		const first = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
 		await importBundle(first, { backupDir: dir });
 
 		const { db: text } = await unpack(await exportTo());
 
-		expect(text).toBe(mysqlBundle());
+		expect(text).toBe(currentShape(mysqlBundle()));
 	});
 
 	const nextSeq = async () => {
@@ -877,13 +900,87 @@ describe('import of a MySQL-era bundle', () => {
 
 			const { db: text } = await unpack(await exportTo());
 
-			expect(text).toBe(mysqlBundle());
+			expect(text).toBe(currentShape(mysqlBundle()));
 			const [project] = await db.select().from(projects);
 			expect(project.createdAt.toISOString()).toBe('2026-01-02T03:04:05.678Z');
 		} finally {
 			await admin.query(`alter database "${name}" reset timezone`);
 			await admin.end();
 		}
+	});
+});
+
+describe('ownership and visibility', () => {
+	const OWNER = 'firebase-uid-1';
+
+	// A Bundle exported before these columns existed lacks them in header and rows alike.
+	function withoutColumns(text: string, drop: Record<string, string[]>): string {
+		let table = '';
+		let at: number[] = [];
+		return text
+			.split('\n')
+			.filter(Boolean)
+			.map((line) => {
+				const parsed = JSON.parse(line);
+				if (!Array.isArray(parsed)) {
+					table = parsed.table;
+					const names: string[] = drop[table] ?? [];
+					at = parsed.columns.flatMap((c: string, i: number) => (names.includes(c) ? [i] : []));
+					parsed.columns = parsed.columns.filter((_: string, i: number) => !at.includes(i));
+					return JSON.stringify(parsed);
+				}
+				return JSON.stringify(parsed.filter((_: unknown, i: number) => !at.includes(i)));
+			})
+			.join('\n');
+	}
+
+	it('carries the owner and both public flags through export and import', async () => {
+		await db.insert(projects).values({
+			id: PROJECT,
+			name: 'Mine',
+			writeKeyHash: WRITE_KEY_HASH,
+			config: { theme: 'light', states: [] },
+			ownerUid: OWNER,
+			public: false
+		});
+		await db.insert(tasks).values({
+			id: TASK,
+			projectId: PROJECT,
+			title: 'Shared',
+			summary: '',
+			state: 'queued',
+			note: '',
+			public: true
+		});
+		const bundle = await exportTo();
+		await resetDb();
+
+		await importBundle(bundle, { backupDir: dir });
+
+		const [project] = await db.select().from(projects);
+		const [task] = await db.select().from(tasks);
+		expect([project.ownerUid, project.public, task.public]).toEqual([OWNER, false, true]);
+	});
+
+	it('imports a Bundle from before ownership as anonymous public Projects', async () => {
+		await seed();
+		const { db: text } = await unpack(await exportTo());
+		const old = await repack(
+			'before-ownership.zip',
+			{
+				[DB_FILE]: withoutColumns(text, {
+					projects: ['owner_uid', 'public'],
+					tasks: ['public']
+				})
+			},
+			(m) => ({ ...m, schema: '0000_baseline' })
+		);
+
+		await importBundle(old, { backupDir: dir });
+
+		const [project] = await db.select().from(projects);
+		const [task] = await db.select().from(tasks);
+		expect([project.ownerUid, project.public, task.public]).toEqual([null, true, false]);
 	});
 });
 

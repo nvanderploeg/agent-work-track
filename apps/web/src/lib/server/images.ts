@@ -34,6 +34,8 @@ export interface ImageCacheOptions {
 export interface ImageCache {
 	put(entry: Entry, finishedAt: string | null): void;
 	get(id: string, size: ImageSize): Buffer | null;
+	/** The Task an image belongs to, whether or not its bytes have expired. */
+	taskOf(id: string): string | null;
 	drop(id: string): void;
 	/** Drops every image of a Project, or of all Projects when none is named; returns how many. */
 	clear(projectId?: string): number;
@@ -110,6 +112,9 @@ export function createImageCache(options: ImageCacheOptions): ImageCache {
 				return null;
 			}
 			return size === 'thumb' ? entry.thumb : entry.full;
+		},
+		taskOf(id) {
+			return entries.get(id)?.taskId ?? null;
 		},
 		clear(projectId) {
 			let dropped = 0;

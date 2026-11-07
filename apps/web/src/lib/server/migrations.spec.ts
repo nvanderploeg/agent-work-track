@@ -7,11 +7,25 @@ async function rows<T extends object>(query: ReturnType<typeof sql>): Promise<T[
 	return (await db.execute<T>(query)).rows;
 }
 
-describe('baseline migration', () => {
-	it('is the only migration, applied once', async () => {
-		expect(await journalTags()).toEqual(['0000_baseline']);
+describe('migrations', () => {
+	it('applies each journal entry once, baseline first', async () => {
+		const tags = await journalTags();
+		expect(tags[0]).toBe('0000_baseline');
 		const applied = await rows(sql`select 1 from drizzle.__drizzle_migrations`);
-		expect(applied).toHaveLength(1);
+		expect(applied).toHaveLength(tags.length);
+	});
+
+	it('leaves existing Projects anonymous and public, and Tasks private', async () => {
+		const found = await rows<{ table_name: string; column_name: string; column_default: string }>(
+			sql`select table_name, column_name, column_default from information_schema.columns
+				where table_schema = current_schema() and column_name in ('owner_uid', 'public')
+				order by table_name, column_name`
+		);
+		expect(found).toEqual([
+			{ table_name: 'projects', column_name: 'owner_uid', column_default: null },
+			{ table_name: 'projects', column_name: 'public', column_default: 'true' },
+			{ table_name: 'tasks', column_name: 'public', column_default: 'false' }
+		]);
 	});
 
 	it('sorts every path column bytewise', async () => {

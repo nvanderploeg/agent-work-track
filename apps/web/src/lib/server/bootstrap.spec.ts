@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DATABASE_URL } from '$app/env/private';
+import { journalTags } from './admin/bundle.ts';
 import { bootstrap } from './bootstrap.ts';
 
 const FRESH = 'chronicle_bootstrap_test';
@@ -31,6 +32,6 @@ describe('bootstrap', () => {
 		const applied = await fresh.query(
 			'select count(*)::int as n from drizzle.__drizzle_migrations'
 		);
-		expect(applied.rows[0].n).toBe(1);
+		expect(applied.rows[0].n).toBe((await journalTags()).length);
 	});
 });

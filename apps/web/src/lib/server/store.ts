@@ -51,6 +51,31 @@ export async function getTaskRow(id: string): Promise<TaskRow | undefined> {
 	return row;
 }
 
+export async function ownedProjects(
+	ownerUid: string
+): Promise<{ project: ProjectRow; tasks: TaskRow[] }[]> {
+	const projectRows = await db
+		.select()
+		.from(projects)
+		.where(eq(projects.ownerUid, ownerUid))
+		.orderBy(desc(projects.lastWriteAt), desc(projects.id));
+	if (!projectRows.length) return [];
+	const taskRows = await db
+		.select()
+		.from(tasks)
+		.where(
+			inArray(
+				tasks.projectId,
+				projectRows.map((row) => row.id)
+			)
+		)
+		.orderBy(desc(tasks.createdAt), desc(tasks.id));
+	return projectRows.map((project) => ({
+		project,
+		tasks: taskRows.filter((task) => task.projectId === project.id)
+	}));
+}
+
 export async function lastWriteAt(projectId: string): Promise<Date | null> {
 	const [row] = await db
 		.select({ at: projects.lastWriteAt })
@@ -288,6 +313,33 @@ export async function patchProject(projectId: string, patch: ProjectPatch): Prom
 	});
 }
 
+export async function setProjectPublic(projectId: string, value: boolean): Promise<Project> {
+	return mutate(projectId, async (ctx) => {
+		const [old] = await ctx.tx.select().from(projects).where(eq(projects.id, projectId));
+		if (old.public === value) return toProject(old);
+		await ctx.tx.update(projects).set({ public: value }).where(eq(projects.id, projectId));
+		const project = toProject({ ...old, public: value });
+		await ctx.emit('project', null, null, project);
+		return project;
+	});
+}
+
+export async function setTaskPublic(
+	projectId: string,
+	taskId: string,
+	value: boolean
+): Promise<Task> {
+	return mutate(projectId, async (ctx) => {
+		const old = await taskInProject(ctx, taskId);
+		if (!old) throw new ApiError(404, 'task not found');
+		if (old.public === value) return toTask(old);
+		await ctx.tx.update(tasks).set({ public: value }).where(eq(tasks.id, taskId));
+		const task = toTask({ ...old, public: value });
+		await ctx.emit('task', taskId, null, task);
+		return task;
+	});
+}
+
 export async function replaceConfig(projectId: string, config: ProjectConfig) {
 	return mutate(projectId, async (ctx) => {
 		await ctx.tx.update(projects).set({ config }).where(eq(projects.id, projectId));
@@ -515,6 +567,7 @@ export async function createTask(
 			agent: input.agent ?? null,
 			links: input.links ?? [],
 			prs: input.prs ?? [],
+			public: false,
 			repo: input.repo ?? null,
 			branch: input.branch ?? null,
 			createdAt: ctx.now,

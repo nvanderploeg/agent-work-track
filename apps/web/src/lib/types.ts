@@ -59,6 +59,8 @@ export interface Project {
 	notes: string;
 	links: Link[];
 	config: ProjectConfig;
+	owned: boolean;
+	public: boolean;
 	createdAt: string;
 	lastWriteAt: string;
 }
@@ -73,6 +75,7 @@ export interface Task {
 	agent: AgentInfo | null;
 	links: Link[];
 	prs: PullRequest[];
+	public: boolean;
 	repo: string | null;
 	branch: string | null;
 	createdAt: string;

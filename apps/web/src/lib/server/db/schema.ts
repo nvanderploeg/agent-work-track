@@ -15,16 +15,23 @@ import {
 const instant = (name: string) => timestamp(name, { precision: 3, withTimezone: true });
 const now = (name: string) => instant(name).notNull().defaultNow();
 
-export const projects = pgTable('projects', {
-	id: varchar('id', { length: 36 }).primaryKey(),
-	name: varchar('name', { length: 255 }).notNull(),
-	notes: text('notes'),
-	links: json('links'),
-	writeKeyHash: char('write_key_hash', { length: 64 }).notNull(),
-	config: json('config').notNull(),
-	createdAt: now('created_at'),
-	lastWriteAt: now('last_write_at')
-});
+export const projects = pgTable(
+	'projects',
+	{
+		id: varchar('id', { length: 36 }).primaryKey(),
+		name: varchar('name', { length: 255 }).notNull(),
+		notes: text('notes'),
+		links: json('links'),
+		writeKeyHash: char('write_key_hash', { length: 64 }).notNull(),
+		config: json('config').notNull(),
+		// Firebase uid of the owner; NULL is an anonymous Project, which is always public.
+		ownerUid: varchar('owner_uid', { length: 128 }),
+		public: boolean('public').notNull().default(true),
+		createdAt: now('created_at'),
+		lastWriteAt: now('last_write_at')
+	},
+	(table) => [index('projects_owner_idx').on(table.ownerUid)]
+);
 
 export const tasks = pgTable(
 	'tasks',
@@ -40,6 +47,7 @@ export const tasks = pgTable(
 		agent: json('agent'),
 		links: json('links'),
 		prs: json('prs'),
+		public: boolean('public').notNull().default(false),
 		repo: varchar('repo', { length: 255 }),
 		branch: varchar('branch', { length: 255 }),
 		createdAt: now('created_at'),

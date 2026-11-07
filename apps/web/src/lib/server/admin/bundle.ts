@@ -92,8 +92,15 @@ function columnsOf(table: PgTable) {
 
 const INTEGER_OIDS = new Set([20, 21, 23]);
 
+const BOOLEAN_OID = 16;
+
 const rawTypes = {
-	getTypeParser: (oid: number) => (INTEGER_OIDS.has(oid) ? Number : (text: string) => text)
+	getTypeParser: (oid: number) =>
+		INTEGER_OIDS.has(oid)
+			? Number
+			: oid === BOOLEAN_OID
+				? (text: string) => text === 't'
+				: (text: string) => text
 };
 
 function selectExpression(column: PgColumn): string {
