@@ -4,4 +4,4 @@
 	let { data } = $props();
 </script>
 
-<Dashboard snapshot={data.snapshot} now={data.now} taskId={data.taskId} />
+<Dashboard snapshot={data.snapshot} now={data.now} taskId={data.taskId} backLink={data.backLink} />

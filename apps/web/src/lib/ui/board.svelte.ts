@@ -172,7 +172,8 @@ export class Board {
 	}
 
 	private connect(): () => void {
-		const url = `/api/projects/${this.state.project.id}/stream?since=${this.state.lastSeq}`;
+		const scope = this.only ? `&task=${this.only}` : '';
+		const url = `/api/projects/${this.state.project.id}/stream?since=${this.state.lastSeq}${scope}`;
 		const es = new EventSource(url);
 		es.onopen = () => (this.connection = 'live');
 		es.onerror = () => {

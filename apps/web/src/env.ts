@@ -67,5 +67,35 @@ export const variables = defineEnvVars({
 	CHRONICLE_HEARTBEAT_MS: {
 		description: 'Milliseconds between `: ping` heartbeats on a project stream.',
 		schema: (value) => Number(value || 25_000)
+	},
+	FIREBASE_PROJECT_ID: {
+		description: 'Firebase project that signs users in.',
+		schema: (value) => value?.trim() || 'runestone-d3a35'
+	},
+	FIREBASE_SERVICE_ACCOUNT_FILE: {
+		description:
+			'Path to the Firebase service account JSON. Wins over `FIREBASE_SERVICE_ACCOUNT`. With neither set, sign-in is off.',
+		schema: (value) => value?.trim() || undefined
+	},
+	FIREBASE_SERVICE_ACCOUNT: {
+		description: 'The Firebase service account JSON itself, for hosts that cannot mount a file.',
+		schema: (value) => {
+			const json = value?.trim();
+			if (!json) return undefined;
+			try {
+				JSON.parse(json);
+			} catch {
+				throw new Error('FIREBASE_SERVICE_ACCOUNT must be valid JSON');
+			}
+			return json;
+		}
+	},
+	FIREBASE_API_KEY: {
+		description: 'Firebase web API key the browser signs in with. Unset: sign-in is off.',
+		schema: (value) => value?.trim() || undefined
+	},
+	FIREBASE_AUTH_DOMAIN: {
+		description: 'Firebase auth domain. Unset: `<FIREBASE_PROJECT_ID>.firebaseapp.com`.',
+		schema: (value) => value?.trim() || undefined
 	}
 });

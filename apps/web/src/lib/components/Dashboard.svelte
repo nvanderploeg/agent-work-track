@@ -17,8 +17,9 @@
 	let {
 		snapshot,
 		now,
-		taskId = null
-	}: { snapshot: Snapshot; now: number; taskId?: string | null } = $props();
+		taskId = null,
+		backLink = true
+	}: { snapshot: Snapshot; now: number; taskId?: string | null; backLink?: boolean } = $props();
 
 	// The board owns this page's live state for its whole lifetime; the load data seeds it once.
 	// svelte-ignore state_referenced_locally
@@ -79,7 +80,7 @@
 
 	<header class="top">
 		<div class="who">
-			{#if taskId}
+			{#if taskId && backLink}
 				<a class="back" href={resolve('/p/[id]', { id: project.id })} data-testid="back-link"
 					>← {project.name}</a
 				>

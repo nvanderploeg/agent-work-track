@@ -8,6 +8,8 @@ export interface StreamOptions {
 	idleMs?: number;
 	heartbeatMs?: number;
 	now?: () => number;
+	/** Only this Task's events, plus Config changes: for a viewer who may read just that Task. */
+	taskId?: string;
 	onClose?: (reason: 'idle' | 'client' | 'error') => void;
 }
 
@@ -86,6 +88,13 @@ export async function createProjectStream(
 	}
 
 	function emit(event: ChronicleEvent): void {
+		if (
+			options.taskId !== undefined &&
+			event.type !== 'config' &&
+			event.taskId !== options.taskId
+		) {
+			return;
+		}
 		if (event.seq <= lastSeq) return;
 		lastSeq = event.seq;
 		send(frame(event));
