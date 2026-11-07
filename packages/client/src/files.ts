@@ -16,6 +16,14 @@ export interface TaskHandle {
 	projectUrl?: string;
 }
 
+// A Firebase refresh token: it never expires on its own, so the file is as sensitive as a password.
+export interface TokenEntry {
+	refreshToken: string;
+	apiKey: string;
+	label?: string;
+}
+
+export type TokensFile = Record<string, TokenEntry>;
 export type ProjectsFile = Record<string, Record<string, ProjectEntry>>;
 export type TasksFile = Record<string, TaskHandle>;
 
@@ -107,6 +115,7 @@ export type Resolved<F> = { ok: true; entry: ProjectEntry; created: boolean } | 
 export function createStore(configDir: string) {
 	const projectsPath = join(configDir, 'projects.json');
 	const tasksPath = join(configDir, 'tasks.json');
+	const tokensPath = join(configDir, 'tokens.json');
 	const lockPath = join(configDir, '.lock');
 
 	async function putProject(server: string, repoKey: string, entry: ProjectEntry): Promise<void> {
@@ -122,6 +131,19 @@ export function createStore(configDir: string) {
 			await readJson(tasksPath);
 		},
 		readTasks: () => readJson<TaskHandle>(tasksPath),
+		readTokens: () => readJson<TokenEntry>(tokensPath),
+		saveToken: (server: string, entry: TokenEntry) =>
+			withLock(lockPath, async () => {
+				const tokens = await readJson<TokenEntry>(tokensPath);
+				tokens[server] = entry;
+				await writeJson(tokensPath, tokens);
+			}),
+		removeToken: (server: string) =>
+			withLock(lockPath, async () => {
+				const tokens = await readJson<TokenEntry>(tokensPath);
+				delete tokens[server];
+				await writeJson(tokensPath, tokens);
+			}),
 		saveProject: (server: string, repoKey: string, entry: ProjectEntry) =>
 			withLock(lockPath, () => putProject(server, repoKey, entry)),
 		saveTask: (taskId: string, handle: TaskHandle) =>

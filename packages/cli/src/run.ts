@@ -34,6 +34,8 @@ const USAGE = `usage:
   chronicle config [--file path.json] [--theme t] [--color state=color]... [--initial state] [--task id] [--cwd dir]
   chronicle url [taskId] [--cwd dir]
   chronicle doctor [--cwd dir]
+  chronicle login [--label name]
+  chronicle logout
 
   agent: [--tool claude-code|codex] [--model id] [--effort level] [--tokens n]`;
 
@@ -362,6 +364,24 @@ export async function run(argv: string[], io: RunIo): Promise<number> {
 				const { values, positionals } = parse(rest, { cwd: { type: 'string' } }, [0, 1]);
 				const result = await client.projectUrl({ taskId: positionals[0], cwd: values.cwd });
 				return finish(result, (v) => v.url);
+			}
+			case 'login': {
+				const { values } = parse(rest, { label: { type: 'string' } }, [0, 0]);
+				const result = await client.login({
+					label: values.label,
+					onCode: (code) =>
+						io.stdout(`Open ${code.verificationUrl} and approve code ${code.userCode}`)
+				});
+				return finish(result, (v) => `logged in to ${v.server}`);
+			}
+			case 'logout': {
+				parse(rest, {}, [0, 0]);
+				const result = await client.logout();
+				return finish(result, (v) =>
+					v.revoked
+						? `logged out of ${v.server}`
+						: `logged out locally; ${v.server} was unreachable`
+				);
 			}
 			case 'doctor': {
 				const { values } = parse(rest, { cwd: { type: 'string' } }, [0, 0]);

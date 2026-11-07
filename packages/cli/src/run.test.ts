@@ -59,7 +59,9 @@ function fakeClient() {
 		addImage: vi.fn(),
 		configure: vi.fn(),
 		projectUrl: vi.fn(),
-		doctor: vi.fn()
+		doctor: vi.fn(),
+		login: vi.fn(),
+		logout: vi.fn()
 	};
 }
 
@@ -561,6 +563,36 @@ describe('url', () => {
 		expect(result.code).toBe(0);
 		expect(result.stderr.trim()).toBe(`chronicle: ${UNREACHABLE}`);
 		expect(result.stdout).toBe('');
+	});
+});
+
+describe('login and logout', () => {
+	it('prints where to approve the code, then reports the server', async () => {
+		const client = fakeClient();
+		client.login.mockImplementation(async (input) => {
+			input.onCode({
+				userCode: 'ABCD-2345',
+				verificationUrl: 'http://s/device?code=ABCD-2345',
+				expiresIn: 600
+			});
+			return { ok: true, value: { server: 'http://s' } };
+		});
+
+		const result = await invoke(['login', '--label', 'laptop'], client);
+
+		expect(client.login.mock.calls[0][0].label).toBe('laptop');
+		expect(result.stdout).toBe(
+			'Open http://s/device?code=ABCD-2345 and approve code ABCD-2345logged in to http://s'
+		);
+	});
+
+	it('says when the server could not be told about a logout', async () => {
+		const client = fakeClient();
+		client.logout.mockResolvedValue({ ok: true, value: { server: 'http://s', revoked: false } });
+
+		const result = await invoke(['logout'], client);
+
+		expect(result.stdout).toBe('logged out locally; http://s was unreachable');
 	});
 });
 

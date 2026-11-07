@@ -4,7 +4,7 @@ export type Failure = { ok: false; warning: string; status?: number; retryAfterM
 export type Reply<T> = { ok: true; status: number; body: T } | Failure;
 
 export interface RequestInit {
-	method: 'GET' | 'POST' | 'PUT' | 'PATCH';
+	method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 	key?: string;
 	body?: unknown;
 }

@@ -59,6 +59,8 @@ export interface Project {
 	notes: string;
 	links: Link[];
 	config: ProjectConfig;
+	owned: boolean;
+	public: boolean;
 	createdAt: string;
 	lastWriteAt: string;
 }
@@ -73,6 +75,7 @@ export interface Task {
 	agent: AgentInfo | null;
 	links: Link[];
 	prs: PullRequest[];
+	public: boolean;
 	repo: string | null;
 	branch: string | null;
 	createdAt: string;
@@ -131,6 +134,8 @@ export interface ClientOptions {
 	remoteProbeTimeoutMs?: number;
 	requestTimeoutMs?: number;
 	imageTimeoutMs?: number;
+	loginPollMs?: number;
+	identityUrls?: { signIn: string; refresh: string };
 	runCommand?: (command: string, args: string[]) => Promise<string | null>;
 }
 
@@ -155,6 +160,12 @@ export interface DoctorReport {
 	repoKey: string;
 	registered: { projectId: string; name: string } | null;
 	registryError: string | null;
+}
+
+export interface LoginCode {
+	userCode: string;
+	verificationUrl: string;
+	expiresIn: number;
 }
 
 export interface ChronicleClient {
@@ -235,4 +246,15 @@ export interface ChronicleClient {
 	}): Promise<Result<{ config: ProjectConfig; projectUrl: string }>>;
 	projectUrl(input: { taskId?: string; cwd?: string }): Promise<Result<{ url: string }>>;
 	doctor(input?: { cwd?: string }): Promise<DoctorReport>;
+	/**
+	 * Device login: asks the server for a code, passes it to `onCode`, then waits for the user to
+	 * approve it signed in and trades the Firebase custom token it is handed for a refresh token
+	 * and stores that. Projects created afterwards are owned by that user.
+	 */
+	login(input?: {
+		label?: string;
+		onCode?: (code: LoginCode) => void;
+	}): Promise<Result<{ server: string }>>;
+	/** Signs every tool of the user out at Firebase (best effort) and forgets the local credential. */
+	logout(): Promise<Result<{ server: string; revoked: boolean }>>;
 }

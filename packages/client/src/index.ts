@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { DEFAULT_CANDIDATES, createDiscovery } from './discovery.ts';
@@ -38,6 +38,16 @@ const unknownTask = (taskId: string): Failure => ({
 	ok: false,
 	warning: `unknown task ${taskId} on this machine — continuing untracked`
 });
+
+// Firebase's two token endpoints answer in different casings.
+interface IdentityReply {
+	idToken?: string;
+	refreshToken?: string;
+	expiresIn?: string;
+	id_token?: string;
+	refresh_token?: string;
+	expires_in?: string;
+}
 
 const unreachable: Failure = { ok: false, warning: UNREACHABLE_WARNING };
 
@@ -116,17 +126,75 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 		return request<T>(fetchFn, timeoutMs, `${server}${path}`, init);
 	}
 
+	// Owned Projects carry no write key; the user's API token for that server writes them.
+	const idTokens = new Map<string, { idToken: string; expiresAt: number }>();
+	const identity = options.identityUrls ?? {
+		signIn: 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken',
+		refresh: 'https://securetoken.googleapis.com/v1/token'
+	};
+	const EXPIRY_MARGIN_MS = 60_000;
+
+	async function identityCall(
+		url: string,
+		apiKey: string,
+		init: globalThis.RequestInit
+	): Promise<IdentityReply | undefined> {
+		try {
+			const res = await fetchFn(`${url}?key=${encodeURIComponent(apiKey)}`, {
+				...init,
+				signal: AbortSignal.timeout(requestTimeoutMs * 4)
+			});
+			return res.ok ? ((await res.json()) as IdentityReply) : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	// The Firebase ID token this machine sends as the bearer, refreshed shortly before it expires.
+	async function tokenFor(server: string): Promise<string | undefined> {
+		const cached = idTokens.get(server);
+		if (cached && cached.expiresAt - Date.now() > EXPIRY_MARGIN_MS) return cached.idToken;
+		const stored = own(await store.readTokens().catch(() => ({})), server);
+		if (!stored) return undefined;
+		const body = await identityCall(identity.refresh, stored.apiKey, {
+			method: 'POST',
+			headers: { 'content-type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({
+				grant_type: 'refresh_token',
+				refresh_token: stored.refreshToken
+			}).toString()
+		});
+		if (!body?.id_token) return undefined;
+		idTokens.set(server, {
+			idToken: body.id_token,
+			expiresAt: Date.now() + Number(body.expires_in ?? 3600) * 1000
+		});
+		if (body.refresh_token && body.refresh_token !== stored.refreshToken) {
+			await store
+				.saveToken(server, { ...stored, refreshToken: body.refresh_token })
+				.catch(() => {});
+		}
+		return body.id_token;
+	}
+
+	async function keyFor(
+		server: string,
+		entry: ProjectEntry | undefined
+	): Promise<string | undefined> {
+		return entry?.writeKey || (await tokenFor(server));
+	}
+
 	async function createProject(
 		server: string,
 		name: string | undefined
 	): Promise<{ ok: true; entry: ProjectEntry } | Failure> {
-		const reply = await send<{ id: string; writeKey: string; name?: string; url?: string }>(
+		const reply = await send<{ id: string; writeKey?: string; name?: string; url?: string }>(
 			server,
 			'/api/projects',
-			{ method: 'POST', body: compact({ name }) }
+			{ method: 'POST', key: await tokenFor(server), body: compact({ name }) }
 		);
 		if (!reply.ok) return reply;
-		const { id, writeKey, url } = reply.body;
+		const { id, writeKey = '', url } = reply.body;
 		return {
 			ok: true,
 			entry: {
@@ -147,7 +215,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 		const reply = await send<{ project: Project }>(
 			server,
 			`/api/projects/${encodeURIComponent(entry.projectId)}`,
-			{ method: 'PATCH', key: entry.writeKey, body: { name } }
+			{ method: 'PATCH', key: await keyFor(server, entry), body: { name } }
 		);
 		if (!reply.ok) return entry;
 		const renamed = { ...entry, name: reply.body.project.name };
@@ -165,7 +233,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 			value: {
 				server: handle.server,
 				projectId: handle.projectId,
-				key: entry?.writeKey,
+				key: await keyFor(handle.server, entry),
 				projectUrl:
 					handle.projectUrl ?? entry?.projectUrl ?? `${handle.server}/p/${handle.projectId}`
 			}
@@ -183,7 +251,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 			value: {
 				server,
 				projectId: entry.projectId,
-				key: entry.writeKey,
+				key: await keyFor(server, entry),
 				projectUrl: entry.projectUrl ?? `${server}/p/${entry.projectId}`
 			}
 		};
@@ -200,6 +268,8 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 	}
 
 	const api: ChronicleClient = {
+		login,
+		logout,
 		discover: () => discovery.discover().catch(() => null),
 
 		startTask: (input) =>
@@ -233,11 +303,11 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 					repo: input.repo ?? refs.repo,
 					branch: input.branch ?? refs.branch
 				});
-				const post = (e: ProjectEntry) =>
+				const post = async (e: ProjectEntry) =>
 					send<{ taskId: string; url: string }>(
 						server,
 						`/api/projects/${encodeURIComponent(e.projectId)}/tasks`,
-						{ method: 'POST', key: e.writeKey, body }
+						{ method: 'POST', key: await keyFor(server, e), body }
 					);
 
 				let reply = await post(entry);
@@ -503,6 +573,79 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 			};
 		}
 	};
+
+	function login(input: Parameters<ChronicleClient['login']>[0] = {}) {
+		return guard(async () => {
+			const server = await discovery.discover();
+			if (!server) return unreachable;
+			const started = await send<{
+				deviceCode: string;
+				userCode: string;
+				verificationUrl: string;
+				expiresIn: number;
+				interval: number;
+			}>(server, '/api/device', {
+				method: 'POST',
+				body: { label: input.label ?? `chronicle on ${hostname()}` }
+			});
+			if (!started.ok) return started;
+			const { deviceCode, userCode, verificationUrl, expiresIn, interval } = started.body;
+			input.onCode?.({ userCode, verificationUrl, expiresIn });
+			const deadline = Date.now() + expiresIn * 1000;
+			while (Date.now() < deadline) {
+				await sleep(options.loginPollMs ?? interval * 1000);
+				const polled = await send<{ status: string; customToken?: string; apiKey?: string }>(
+					server,
+					'/api/device',
+					{ method: 'GET', key: deviceCode }
+				);
+				if (!polled.ok) return polled;
+				const { customToken, apiKey } = polled.body;
+				if (customToken && apiKey) {
+					const signedIn = await identityCall(identity.signIn, apiKey, {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ token: customToken, returnSecureToken: true })
+					});
+					if (!signedIn?.refreshToken) {
+						return { ok: false, warning: 'Firebase refused the login; try again' };
+					}
+					await store.saveToken(server, {
+						refreshToken: signedIn.refreshToken,
+						apiKey,
+						label: input.label
+					});
+					if (signedIn.idToken) {
+						idTokens.set(server, {
+							idToken: signedIn.idToken,
+							expiresAt: Date.now() + Number(signedIn.expiresIn ?? 3600) * 1000
+						});
+					}
+					return { ok: true, value: { server } };
+				}
+			}
+			return { ok: false, warning: 'login timed out before it was approved' };
+		});
+	}
+
+	function logout() {
+		return guard(async () => {
+			const server = await discovery.discover();
+			if (!server) return unreachable;
+			if (!own(await store.readTokens().catch(() => ({})), server)) {
+				return { ok: false, warning: 'not logged in on this server' };
+			}
+			const token = await tokenFor(server);
+			if (!token) {
+				await store.removeToken(server);
+				return { ok: true, value: { server, revoked: false } };
+			}
+			const reply = await send(server, '/api/token', { method: 'DELETE', key: token });
+			await store.removeToken(server);
+			idTokens.delete(server);
+			return { ok: true, value: { server, revoked: reply.ok } };
+		});
+	}
 
 	// A task waiting in a review-kind state moves to the first done-kind state once every PR merged.
 	async function mergedState(taskId: string, state: string): Promise<string | undefined> {

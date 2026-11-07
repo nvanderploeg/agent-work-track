@@ -15,7 +15,9 @@ type Method =
 	| 'getTask'
 	| 'configure'
 	| 'projectUrl'
-	| 'doctor';
+	| 'doctor'
+	| 'login'
+	| 'logout';
 
 type FakeClient = Record<Method, Mock>;
 
@@ -105,6 +107,15 @@ function fakeClient(): FakeClient {
 		),
 		configure: vi.fn(async () => okResult({ config: CONFIG, projectUrl: `${SERVER}/p/proj1` })),
 		projectUrl: vi.fn(async () => okResult({ url: `${SERVER}/p/proj1` })),
+		login: vi.fn(async (input?: { onCode?: (c: unknown) => void }) => {
+			input?.onCode?.({
+				userCode: 'ABCD-2345',
+				verificationUrl: `${SERVER}/device?code=ABCD-2345`,
+				expiresIn: 600
+			});
+			return okResult({ server: SERVER });
+		}),
+		logout: vi.fn(async () => okResult({ server: SERVER, revoked: true })),
 		doctor: vi.fn(async () => ({
 			configDir: '/home/test/.config/chronicle',
 			pinned: null,
@@ -158,6 +169,40 @@ async function callOutcome(
 	}
 }
 
+describe('login tool', () => {
+	it('returns the approval url and code at once, without waiting for the approval', async () => {
+		const client = fakeClient();
+		client.login.mockImplementation(async (input?: { onCode?: (c: unknown) => void }) => {
+			input?.onCode?.({
+				userCode: 'ABCD-2345',
+				verificationUrl: `${SERVER}/device?code=ABCD-2345`,
+				expiresIn: 600
+			});
+			return new Promise(() => {});
+		});
+		const { mcp } = await connect(client);
+
+		const result = (await mcp.callTool({ name: 'login', arguments: {} })) as {
+			content: { text: string }[];
+		};
+
+		expect(result.content[0].text).toContain(`${SERVER}/device?code=ABCD-2345`);
+		expect(result.content[0].text).toContain('ABCD-2345');
+	});
+
+	it('reports a login that fails before any code exists', async () => {
+		const client = fakeClient();
+		client.login.mockResolvedValue({ ok: false, warning: 'chronicle unreachable' });
+		const { mcp } = await connect(client);
+
+		const result = (await mcp.callTool({ name: 'login', arguments: {} })) as {
+			content: { text: string }[];
+		};
+
+		expect(result.content[0].text).toBe('chronicle: chronicle unreachable');
+	});
+});
+
 describe('chronicle MCP server', () => {
 	it('identifies itself as the chronicle server', async () => {
 		const { mcp } = await connect();
@@ -166,7 +211,7 @@ describe('chronicle MCP server', () => {
 	});
 
 	describe('tool listing', () => {
-		it('lists exactly the eight chronicle tools', async () => {
+		it('lists exactly the chronicle tools', async () => {
 			const { mcp } = await connect();
 
 			const { tools } = await mcp.listTools();
@@ -176,6 +221,8 @@ describe('chronicle MCP server', () => {
 				'add_notice',
 				'configure',
 				'get_task',
+				'login',
+				'logout',
 				'start_task',
 				'update_project',
 				'update_step',

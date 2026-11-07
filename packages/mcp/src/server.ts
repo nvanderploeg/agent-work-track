@@ -169,6 +169,41 @@ export function createServer(
 	};
 
 	server.registerTool(
+		'login',
+		{
+			description:
+				'Connect this machine to a chronicle account so new projects are owned by the user. Returns a url and code: print them to the user, who approves the code while signed in. The token is stored once they do; no further call is needed.',
+			inputSchema: { label: z.string().max(100).optional() }
+		},
+		async (args) => {
+			let announce!: (text: string) => void;
+			const first = new Promise<string>((resolve) => (announce = resolve));
+			const finished = client
+				.login({
+					label: args.label,
+					onCode: (code) =>
+						announce(
+							`Ask the user to open ${code.verificationUrl} and approve code ${code.userCode}. It expires in ${Math.round(code.expiresIn / 60)} minutes.`
+						)
+				})
+				.then((result) => {
+					announce(result.ok ? 'logged in' : `chronicle: ${result.warning}`);
+				});
+			void finished.catch(() => {});
+			return { content: [{ type: 'text', text: await first }] };
+		}
+	);
+
+	server.registerTool(
+		'logout',
+		{
+			description: 'Disconnect this machine from the chronicle account and revoke its token.',
+			inputSchema: {}
+		},
+		async () => respond(await client.logout())
+	);
+
+	server.registerTool(
 		'start_task',
 		{
 			description:
