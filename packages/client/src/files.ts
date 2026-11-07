@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 
@@ -53,7 +53,16 @@ async function readJson<T>(path: string): Promise<Record<string, T>> {
 	return parsed as Record<string, T>;
 }
 
+async function tightenDir(dir: string): Promise<void> {
+	try {
+		if (((await stat(dir)).mode & 0o077) !== 0) await chmod(dir, 0o700);
+	} catch {
+		// absent or not ours: nothing to tighten
+	}
+}
+
 export async function readLogin(path: string): Promise<Login | null> {
+	await tightenDir(dirname(path));
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(await readFile(path, 'utf8'));
@@ -85,6 +94,7 @@ export const removeLogin = (path: string): Promise<void> =>
 
 async function writeJson(path: string, data: unknown): Promise<void> {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	await tightenDir(dirname(path));
 	const tmp = join(dirname(path), `.tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
 	try {
 		await writeFile(tmp, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });

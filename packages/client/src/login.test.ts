@@ -246,6 +246,20 @@ describe('login file', () => {
 		expect(refreshes).toBe(0);
 	});
 
+	it('tightens a directory left wider than 0700 when read or written', async () => {
+		seedLogin();
+		fs.chmodSync(path.dirname(loginFile), 0o755);
+		await makeClient().logout();
+		expect(fs.statSync(path.dirname(loginFile)).mode & 0o777).toBe(0o700);
+
+		fs.mkdirSync(path.dirname(loginFile), { recursive: true });
+		fs.chmodSync(path.dirname(loginFile), 0o755);
+		deviceServer(0);
+		await makeClient().login();
+
+		expect(fs.statSync(path.dirname(loginFile)).mode & 0o777).toBe(0o700);
+	});
+
 	it('reads as logged out while damaged', async () => {
 		fs.mkdirSync(path.dirname(loginFile), { recursive: true });
 		fs.writeFileSync(loginFile, '{"refreshTok');
