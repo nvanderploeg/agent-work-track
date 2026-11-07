@@ -2,6 +2,7 @@ import type { RequestHandler } from './$types';
 import { ApiError, parseId, route } from '#lib/server/api.ts';
 import { readableProject, readableTask } from '#lib/server/access.ts';
 import { log } from '#lib/server/log.ts';
+import { viewerOf } from '#lib/server/viewer.ts';
 import { createProjectStream } from '#lib/server/stream.ts';
 
 function parseSince(request: Request, url: URL): number | undefined {
@@ -22,12 +23,14 @@ export const GET: RequestHandler = route(async ({ request, params, url, getClien
 	} else {
 		await readableProject(request, projectId);
 	}
+	const viewer = await viewerOf(request).catch(() => null);
 	const since = parseSince(request, url);
 	const ip = getClientAddress();
 	const openedAt = Date.now();
 	const stream = await createProjectStream(projectId, {
 		since,
 		taskId,
+		uid: viewer?.uid,
 		onClose: (reason) =>
 			log('stream.close', {
 				project: projectId,

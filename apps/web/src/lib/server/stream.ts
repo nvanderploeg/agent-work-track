@@ -10,6 +10,8 @@ export interface StreamOptions {
 	now?: () => number;
 	/** Only this Task's events, plus Config changes: for a viewer who may read just that Task. */
 	taskId?: string;
+	/** The signed-in reader, so `endUserStreams` can end this stream. */
+	uid?: string;
 	onClose?: (reason: 'idle' | 'client' | 'error') => void;
 }
 
@@ -21,6 +23,13 @@ export function endStreams(projectId?: string): void {
 	for (const [id, ends] of [...open]) {
 		if (projectId === undefined || id === projectId) for (const end of [...ends]) end('reset');
 	}
+}
+
+const openByUser = new Map<string, Set<(event: 'idle' | 'reset') => void>>();
+
+/** Ends every open stream of one signed-in reader, after their sessions were revoked. */
+export function endUserStreams(uid: string): void {
+	for (const end of [...(openByUser.get(uid) ?? [])]) end('reset');
 }
 
 function frame(event: ChronicleEvent): string {
@@ -65,6 +74,10 @@ export async function createProjectStream(
 		closed = true;
 		open.get(projectId)?.delete(end);
 		if (open.get(projectId)?.size === 0) open.delete(projectId);
+		if (options.uid) {
+			openByUser.get(options.uid)?.delete(end);
+			if (openByUser.get(options.uid)?.size === 0) openByUser.delete(options.uid);
+		}
 		unsubscribe?.();
 		unsubscribe = undefined;
 		clearTimeout(idleTimer);
@@ -113,6 +126,10 @@ export async function createProjectStream(
 			controller = c;
 			if (!open.has(projectId)) open.set(projectId, new Set());
 			open.get(projectId)!.add(end);
+			if (options.uid) {
+				if (!openByUser.has(options.uid)) openByUser.set(options.uid, new Set());
+				openByUser.get(options.uid)!.add(end);
+			}
 			unsubscribe = subscribe(projectId, onLive);
 			armIdle();
 			send(': ok\n\n');

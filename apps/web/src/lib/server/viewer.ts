@@ -1,7 +1,9 @@
 import { AUTH_COOKIE_DOMAIN } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
-import { verifySession, type Viewer } from '#lib/server/identity.ts';
+import { revokeTools, verifySession, type Viewer } from '#lib/server/identity.ts';
+import { log } from '#lib/server/log.ts';
 import { publicOrigin } from '#lib/server/origin.ts';
+import { endUserStreams } from '#lib/server/stream.ts';
 import { recordUser } from '#lib/server/users.ts';
 
 // Same name and Domain in sagas, chronicle and beryl: one sign-in covers all three.
@@ -49,5 +51,26 @@ export async function requireViewer(request: Request): Promise<Viewer> {
 export function requireSameOrigin(request: Request, url: URL): void {
 	if (request.headers.get('origin') !== publicOrigin(url)) {
 		throw new ApiError(403, 'cross-origin request refused');
+	}
+}
+
+/** Signs the user out everywhere: every session and tool must authenticate again, and open streams end. */
+export async function signOutEverywhere(uid: string): Promise<void> {
+	try {
+		await revokeTools(uid);
+	} finally {
+		endUserStreams(uid);
+	}
+}
+
+/** Signs out the session cookie's user everywhere. Never throws: the caller clears the cookie regardless. */
+export async function endSession(request: Request): Promise<void> {
+	const cookie = cookieValue(request, SESSION_COOKIE);
+	if (!cookie) return;
+	try {
+		const viewer = await verifySession(cookie);
+		if (viewer) await signOutEverywhere(viewer.uid);
+	} catch (error) {
+		log('session.revoke_failed', { error: (error as Error).message });
 	}
 }
