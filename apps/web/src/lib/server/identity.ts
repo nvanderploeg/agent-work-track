@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -72,15 +73,65 @@ function toViewer(claims: {
 	};
 }
 
+// Codes that say the token is bad, as opposed to Firebase being unreachable or overloaded.
+const INFRASTRUCTURE_CODES = new Set([
+	'auth/internal-error',
+	'auth/network-error',
+	'auth/quota-exceeded',
+	'auth/too-many-requests',
+	'auth/service-unavailable',
+	'auth/certificate-fetch-failed'
+]);
+
+function failVerification(error: unknown): null {
+	const code = (error as { code?: unknown }).code;
+	if (typeof code === 'string' && code.startsWith('auth/') && !INFRASTRUCTURE_CODES.has(code)) {
+		return null;
+	}
+	log('identity.error', { error: (error as Error).message });
+	throw new ApiError(503, 'sign-in is unavailable; retry shortly');
+}
+
+// A verified token is trusted for a few seconds, so a burst of requests costs one revocation check.
+const VERIFY_CACHE_MS = 5000;
+const CACHE_PRUNE_ABOVE = 5000;
+const verified = new Map<string, { viewer: Viewer; until: number }>();
+
+const cacheKey = (kind: string, token: string) =>
+	`${kind}:${createHash('sha256').update(token).digest('hex')}`;
+
+function cached(key: string): Viewer | undefined {
+	const hit = verified.get(key);
+	if (!hit) return undefined;
+	if (hit.until > Date.now()) return hit.viewer;
+	verified.delete(key);
+	return undefined;
+}
+
+function remember(key: string, viewer: Viewer): void {
+	if (verified.size > CACHE_PRUNE_ABOVE) {
+		for (const [k, v] of verified) if (v.until <= Date.now()) verified.delete(k);
+	}
+	verified.set(key, { viewer, until: Date.now() + VERIFY_CACHE_MS });
+}
+
+function forget(uid: string): void {
+	for (const [key, hit] of verified) if (hit.viewer.uid === uid) verified.delete(key);
+}
+
 /** Exchanges a freshly issued Firebase ID token for a session cookie value. */
 export async function createSession(idToken: string): Promise<{ cookie: string; viewer: Viewer }> {
 	if (!signInEnabled) throw new ApiError(503, 'sign-in is not configured');
 	const auth = getAuth(admin());
 	let claims;
 	try {
-		claims = await auth.verifyIdToken(idToken);
-	} catch {
+		claims = await auth.verifyIdToken(idToken, true);
+	} catch (error) {
+		failVerification(error);
 		throw new ApiError(401, 'invalid ID token');
+	}
+	if (claims.firebase?.sign_in_provider === 'custom') {
+		throw new ApiError(403, 'a tool login cannot start a browser session');
 	}
 	if (Date.now() / 1000 - claims.auth_time > FRESH_SECONDS) {
 		throw new ApiError(401, 'sign in again: the ID token is too old');
@@ -91,17 +142,18 @@ export async function createSession(idToken: string): Promise<{ cookie: string; 
 	return { cookie, viewer: toViewer(claims) };
 }
 
-/** The signed-in user a session cookie names, or null when it is forged, expired or unconfigured. */
+/** The signed-in user a session cookie names, or null when it is forged, expired or revoked. Throws 503 when Firebase cannot answer. */
 export async function verifySession(cookie: string): Promise<Viewer | null> {
 	if (!signInEnabled) return null;
+	const key = cacheKey('session', cookie);
+	const hit = cached(key);
+	if (hit) return hit;
 	try {
-		return toViewer(await getAuth(admin()).verifySessionCookie(cookie));
+		const viewer = toViewer(await getAuth(admin()).verifySessionCookie(cookie, true));
+		remember(key, viewer);
+		return viewer;
 	} catch (error) {
-		const code = (error as { code?: unknown }).code;
-		if (typeof code !== 'string' || !code.startsWith('auth/')) {
-			log('identity.error', { error: (error as Error).message });
-		}
-		return null;
+		return failVerification(error);
 	}
 }
 
@@ -111,17 +163,18 @@ const ID_TOKEN = /^eyJ[\w-]*\.[\w-]+\.[\w-]*$/;
 export const isIdToken = (value: string | undefined): value is string =>
 	value !== undefined && ID_TOKEN.test(value);
 
-/** The user an ID token names, or null when it is forged, expired or its refresh tokens were revoked. */
+/** The user an ID token names, or null when it is forged, expired or its refresh tokens were revoked. Throws 503 when Firebase cannot answer. */
 export async function verifyBearer(idToken: string): Promise<Viewer | null> {
 	if (!signInEnabled) return null;
+	const key = cacheKey('bearer', idToken);
+	const hit = cached(key);
+	if (hit) return hit;
 	try {
-		return toViewer(await getAuth(admin()).verifyIdToken(idToken, true));
+		const viewer = toViewer(await getAuth(admin()).verifyIdToken(idToken, true));
+		remember(key, viewer);
+		return viewer;
 	} catch (error) {
-		const code = (error as { code?: unknown }).code;
-		if (typeof code !== 'string' || !code.startsWith('auth/')) {
-			log('identity.error', { error: (error as Error).message });
-		}
-		return null;
+		return failVerification(error);
 	}
 }
 
@@ -131,8 +184,9 @@ export async function customTokenFor(uid: string): Promise<string> {
 	return getAuth(admin()).createCustomToken(uid);
 }
 
-/** Invalidates every refresh token of the user: each connected tool must log in again. */
+/** Invalidates every refresh token of the user: every browser session and connected tool must sign in again. */
 export async function revokeTools(uid: string): Promise<void> {
 	if (!signInEnabled) throw new ApiError(503, 'sign-in is not configured');
 	await getAuth(admin()).revokeRefreshTokens(uid);
+	forget(uid);
 }

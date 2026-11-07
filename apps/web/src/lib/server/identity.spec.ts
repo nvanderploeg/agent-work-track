@@ -56,7 +56,9 @@ describe('createSession', () => {
 	});
 
 	it('refuses an ID token Firebase rejects', async () => {
-		auth.verifyIdToken.mockRejectedValue(new Error('bad'));
+		auth.verifyIdToken.mockRejectedValue(
+			Object.assign(new Error('bad'), { code: 'auth/argument-error' })
+		);
 
 		await expect(createSession('x')).rejects.toMatchObject({ status: 401 });
 		expect(auth.createSessionCookie).not.toHaveBeenCalled();
@@ -70,11 +72,110 @@ describe('createSession', () => {
 	});
 });
 
+describe('createSession provider', () => {
+	it('refuses a tool login token, which is a custom-token sign-in', async () => {
+		auth.verifyIdToken.mockResolvedValue({
+			...claims(now() - 10),
+			firebase: { sign_in_provider: 'custom' }
+		});
+
+		await expect(createSession('tool-token')).rejects.toMatchObject({ status: 403 });
+		expect(auth.createSessionCookie).not.toHaveBeenCalled();
+	});
+
+	it('accepts a browser sign-in provider', async () => {
+		auth.verifyIdToken.mockResolvedValue({
+			...claims(now() - 10),
+			firebase: { sign_in_provider: 'google.com' }
+		});
+		auth.createSessionCookie.mockResolvedValue('cookie');
+
+		expect((await createSession('browser-token')).cookie).toBe('cookie');
+	});
+
+	it('reports 503, not 401, when Firebase cannot answer', async () => {
+		auth.verifyIdToken.mockRejectedValue(new Error('ECONNRESET'));
+
+		await expect(createSession('x')).rejects.toMatchObject({ status: 503 });
+	});
+});
+
+describe('verification failures', () => {
+	const failure = (code?: string) => Object.assign(new Error('boom'), code ? { code } : {});
+
+	it.each([
+		'auth/id-token-expired',
+		'auth/id-token-revoked',
+		'auth/argument-error',
+		'auth/user-disabled'
+	])('treat %s as an invalid token', async (code) => {
+		auth.verifyIdToken.mockRejectedValue(failure(code));
+
+		expect(await verifyBearer(`invalid-${code}`)).toBeNull();
+	});
+
+	it.each([undefined, 'auth/internal-error', 'auth/quota-exceeded', 'app/network-error'])(
+		'treat %s as an outage, never as an invalid token',
+		async (code) => {
+			auth.verifyIdToken.mockRejectedValue(failure(code));
+			auth.verifySessionCookie.mockRejectedValue(failure(code));
+
+			await expect(verifyBearer(`outage-${code}`)).rejects.toMatchObject({ status: 503 });
+			await expect(verifySession(`outage-${code}`)).rejects.toMatchObject({ status: 503 });
+		}
+	);
+
+	it('are not cached', async () => {
+		auth.verifyIdToken.mockRejectedValueOnce(failure('auth/id-token-revoked'));
+		auth.verifyIdToken.mockResolvedValueOnce({ uid: 'u9' });
+
+		expect(await verifyBearer('retry-token')).toBeNull();
+		expect((await verifyBearer('retry-token'))?.uid).toBe('u9');
+	});
+});
+
+describe('revocation checks', () => {
+	it('are shared by requests within a few seconds, then repeated', async () => {
+		vi.useFakeTimers();
+		try {
+			auth.verifyIdToken.mockResolvedValue({ uid: 'u10' });
+
+			await verifyBearer('burst-token');
+			await verifyBearer('burst-token');
+			expect(auth.verifyIdToken).toHaveBeenCalledTimes(1);
+
+			vi.advanceTimersByTime(6000);
+			await verifyBearer('burst-token');
+			expect(auth.verifyIdToken).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('are forgotten for a user whose tokens were just revoked', async () => {
+		auth.verifyIdToken.mockResolvedValue({ uid: 'u11' });
+		await verifyBearer('soon-revoked');
+
+		await revokeTools('u11');
+		await verifyBearer('soon-revoked');
+
+		expect(auth.verifyIdToken).toHaveBeenCalledTimes(2);
+	});
+});
+
 describe('verifySession', () => {
+	it('checks revocation, so signing out elsewhere ends the session', async () => {
+		auth.verifySessionCookie.mockResolvedValue({ uid: 'u12' });
+
+		await verifySession('cookie-revocation');
+
+		expect(auth.verifySessionCookie).toHaveBeenCalledWith('cookie-revocation', true);
+	});
+
 	it('names the user a valid cookie belongs to', async () => {
 		auth.verifySessionCookie.mockResolvedValue({ uid: 'u2' });
 
-		expect(await verifySession('c')).toEqual({
+		expect(await verifySession('c-valid')).toEqual({
 			uid: 'u2',
 			email: null,
 			name: null,
@@ -87,7 +188,7 @@ describe('verifySession', () => {
 			Object.assign(new Error('expired'), { code: 'auth/session-cookie-expired' })
 		);
 
-		expect(await verifySession('c')).toBeNull();
+		expect(await verifySession('c-expired')).toBeNull();
 	});
 });
 
@@ -95,8 +196,8 @@ describe('verifyBearer', () => {
 	it('checks revocation, so a revoked tool stops at once', async () => {
 		auth.verifyIdToken.mockResolvedValue({ uid: 'u3' });
 
-		expect((await verifyBearer('t'))?.uid).toBe('u3');
-		expect(auth.verifyIdToken).toHaveBeenCalledWith('t', true);
+		expect((await verifyBearer('t-valid'))?.uid).toBe('u3');
+		expect(auth.verifyIdToken).toHaveBeenCalledWith('t-valid', true);
 	});
 
 	it('is null for a token Firebase refuses', async () => {
@@ -104,7 +205,7 @@ describe('verifyBearer', () => {
 			Object.assign(new Error('revoked'), { code: 'auth/id-token-revoked' })
 		);
 
-		expect(await verifyBearer('t')).toBeNull();
+		expect(await verifyBearer('t-revoked')).toBeNull();
 	});
 
 	it('tells an ID token from a write key', () => {
