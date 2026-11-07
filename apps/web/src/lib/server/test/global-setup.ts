@@ -1,19 +1,19 @@
 import { resolve } from 'node:path';
-import { drizzle } from 'drizzle-orm/mysql2';
-import { migrate } from 'drizzle-orm/mysql2/migrator';
-import mysql from 'mysql2/promise';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import pg from 'pg';
 
 export default async function setup(): Promise<void> {
-	const uri = process.env.DATABASE_URL;
-	if (!uri) throw new Error('DATABASE_URL is not set');
+	const connectionString = process.env.DATABASE_URL;
+	if (!connectionString) throw new Error('DATABASE_URL is not set');
 
-	const connection = await mysql.createConnection({ uri });
+	const client = new pg.Client({ connectionString });
+	await client.connect();
 	try {
-		await connection.query("SET time_zone = '+00:00'");
-		await migrate(drizzle(connection), {
+		await migrate(drizzle(client), {
 			migrationsFolder: resolve(import.meta.dirname, '../../../../drizzle')
 		});
 	} finally {
-		await connection.end();
+		await client.end();
 	}
 }

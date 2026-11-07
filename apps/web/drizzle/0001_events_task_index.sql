@@ -1,1 +1,0 @@
-CREATE INDEX `events_task_path_seq_idx` ON `events` (`task_id`,`path`,`seq`);

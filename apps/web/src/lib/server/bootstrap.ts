@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sql } from 'drizzle-orm';
-import { migrate } from 'drizzle-orm/mysql2/migrator';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { db } from '#lib/server/db/index.ts';
 
 const CONNECT_ATTEMPTS = 30;
