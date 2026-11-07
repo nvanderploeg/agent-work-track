@@ -15,7 +15,9 @@
 	let name = $state('');
 	let message = $state('');
 	let failed = $state(false);
-	let created = $state<{ id: string; writeKey: string } | null>(null);
+	let tokens = $state<
+		{ id: string; label: string; createdAt: string; lastUsedAt: string | null }[]
+	>([]);
 
 	function report(text: string, bad: boolean) {
 		message = text;
@@ -25,6 +27,8 @@
 	async function load() {
 		const res = await fetch('/api/me/projects');
 		if (res.ok) owned = (await res.json()).projects;
+		const found = await fetch('/api/me/tokens');
+		if (found.ok) tokens = (await found.json()).tokens;
 		loaded = true;
 	}
 
@@ -52,11 +56,15 @@
 		entry.tasks = entry.tasks.map((t) => (t.id === updated.id ? updated : t));
 	}
 
+	async function revoke(id: string) {
+		const res = await send(`/api/me/tokens/${id}`, 'DELETE', undefined);
+		if (res.ok) tokens = tokens.filter((t) => t.id !== id);
+	}
+
 	async function create(event: SubmitEvent) {
 		event.preventDefault();
 		const res = await send('/api/me/projects', 'POST', name.trim() ? { name: name.trim() } : {});
 		if (!res.ok) return;
-		created = await res.json();
 		name = '';
 		report('', false);
 		await load();
@@ -102,12 +110,6 @@
 			<button class="rounded bg-(--accent) px-4 py-2 text-white" data-testid="create">Create</button
 			>
 		</form>
-
-		{#if created}
-			<p class="rounded border border-(--added) p-3 text-sm" data-testid="created">
-				Write key, shown once: <code class="break-all">{created.writeKey}</code>
-			</p>
-		{/if}
 
 		<section aria-labelledby="mine" class="space-y-3">
 			<h2 id="mine" class="text-lg font-semibold">Your projects</h2>
@@ -160,6 +162,33 @@
 				</div>
 			{:else}
 				<p class="text-(--muted)" data-testid="empty">You own no projects yet.</p>
+			{/each}
+		</section>
+
+		<section aria-labelledby="tools" class="space-y-3">
+			<h2 id="tools" class="text-lg font-semibold">Connected tools</h2>
+			<p class="text-sm text-(--muted)">
+				Tools write to your projects with a token you approve. Run <code>chronicle login</code> in a terminal
+				to connect one.
+			</p>
+			{#each tokens as token (token.id)}
+				<div
+					class="flex items-baseline justify-between gap-4 rounded border border-(--line) bg-(--surface) p-3 text-sm"
+					data-testid="token"
+				>
+					<span>
+						{token.label}
+						<span class="text-(--muted)">
+							· connected {new Date(token.createdAt).toLocaleDateString()}
+							{#if token.lastUsedAt}· used {new Date(token.lastUsedAt).toLocaleString()}{/if}
+						</span>
+					</span>
+					<button class="text-(--removed)" onclick={() => revoke(token.id)} data-testid="revoke"
+						>Revoke</button
+					>
+				</div>
+			{:else}
+				<p class="text-(--muted)" data-testid="no-tokens">No tools connected.</p>
 			{/each}
 		</section>
 	{/if}

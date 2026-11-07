@@ -97,5 +97,17 @@ export const variables = defineEnvVars({
 	FIREBASE_AUTH_DOMAIN: {
 		description: 'Firebase auth domain. Unset: `<FIREBASE_PROJECT_ID>.firebaseapp.com`.',
 		schema: (value) => value?.trim() || undefined
+	},
+	AUTH_COOKIE_DOMAIN: {
+		description:
+			'Domain of the shared `runestone_session` cookie, e.g. `.nanzero.com`, so one sign-in covers every app under it. Unset: a host-only cookie.',
+		schema: (value) => {
+			const domain = value?.trim().toLowerCase();
+			if (!domain) return undefined;
+			if (!/^\.?[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain)) {
+				throw new Error('AUTH_COOKIE_DOMAIN must be a domain such as .example.com');
+			}
+			return domain;
+		}
 	}
 });

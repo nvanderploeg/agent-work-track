@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { db } from '#lib/server/db/index.ts';
+import { users } from '#lib/server/db/schema.ts';
 import { resetDb } from '#lib/server/test/db.ts';
 import { fakeJpeg } from '#lib/server/test/jpeg.ts';
 
@@ -21,6 +23,8 @@ vi.mock('#lib/server/identity.ts', () => ({
 }));
 
 const { createProjectStream } = await import('./stream.ts');
+const { mintToken } = await import('./tokens.ts');
+const { sessionCookieHeader } = await import('./viewer.ts');
 const { POST: postProject } = await import('../../routes/api/projects/+server.ts');
 const { GET: getProject, PATCH: patchProject } =
 	await import('../../routes/api/projects/[id]/+server.ts');
@@ -56,7 +60,7 @@ interface Call {
 function ev({ method = 'GET', path, as, body, key, params = {}, origin = ORIGIN }: Call) {
 	const url = new URL(path, ORIGIN);
 	const headers = new Headers();
-	if (as) headers.set('cookie', `chronicle_session=uid-${as}`);
+	if (as) headers.set('cookie', `runestone_session=uid-${as}`);
 	if (key) headers.set('authorization', `Bearer ${key}`);
 	if (origin !== null) headers.set('origin', origin);
 	if (body !== undefined) headers.set('content-type', 'application/json');
@@ -75,19 +79,21 @@ function ev({ method = 'GET', path, as, body, key, params = {}, origin = ORIGIN 
 
 const json = async (response: Response) => response.json() as Promise<Record<string, any>>;
 
+// An owned Project is written with its owner's API token; `token` is for its writes.
 async function ownedProject(owner = 'alice') {
 	const res = await createMine(
 		ev({ method: 'POST', path: '/api/me/projects', as: owner, body: {} })
 	);
-	return json(res) as Promise<{ id: string; writeKey: string }>;
+	const { id } = await json(res);
+	return { id: id as string, token: await mintToken(owner, 'test') };
 }
 
-async function task(project: { id: string; writeKey: string }, title = 'T') {
+async function task(project: { id: string; token: string }, title = 'T') {
 	const res = await postTask(
 		ev({
 			method: 'POST',
 			path: `/api/projects/${project.id}/tasks`,
-			key: project.writeKey,
+			key: project.token,
 			params: { id: project.id },
 			body: { title }
 		})
@@ -181,14 +187,14 @@ describe('owned Projects', () => {
 		expect(((await page('alice')) as any).snapshot.project.id).toBe(id);
 	});
 
-	it('keep accepting their write key', async () => {
+	it("accept their owner's API token for writes", async () => {
 		const project = await ownedProject();
 
 		const res = await patchProject(
 			ev({
 				method: 'PATCH',
 				path: `/api/projects/${project.id}`,
-				key: project.writeKey,
+				key: project.token,
 				params: { id: project.id },
 				body: { name: 'Renamed' }
 			})
@@ -289,7 +295,7 @@ describe('a public Task in a private Project', () => {
 			ev({
 				method: 'PATCH',
 				path: `/api/projects/${project.id}`,
-				key: project.writeKey,
+				key: project.token,
 				params: { id: project.id },
 				body: { name: 'Secret name', notes: 'secret notes' }
 			})
@@ -343,7 +349,7 @@ describe('a public Task in a private Project', () => {
 			ev({
 				method: 'PATCH',
 				path: `/api/projects/${project.id}`,
-				key: project.writeKey,
+				key: project.token,
 				params: { id: project.id },
 				body: { name: 'Secret name' }
 			})
@@ -383,7 +389,7 @@ describe('a public Task in a private Project', () => {
 						ev({
 							method: 'POST',
 							path: `/api/tasks/${taskId}/images`,
-							key: project.writeKey,
+							key: project.token,
 							params: { taskId },
 							body: { thumb: fakeJpeg(8, 8).toString('base64') }
 						})
@@ -400,6 +406,33 @@ describe('a public Task in a private Project', () => {
 	});
 });
 
+describe('the shared session cookie', () => {
+	const url = new URL(ORIGIN);
+
+	it('is named runestone_session and host-only without a configured domain', () => {
+		expect(sessionCookieHeader('v', 10, url, undefined)).toBe(
+			'runestone_session=v; Path=/; HttpOnly; SameSite=Lax; Max-Age=10'
+		);
+	});
+
+	it('carries the configured Domain when set, and when cleared', () => {
+		expect(sessionCookieHeader('v', 10, url, '.nanzero.com')).toContain('; Domain=.nanzero.com');
+		expect(sessionCookieHeader('', 0, url, '.nanzero.com')).toMatch(
+			/Max-Age=0; Domain=\.nanzero\.com/
+		);
+	});
+
+	it('records the signed-in user once, on the first verified request', async () => {
+		expect(await db.select().from(users)).toEqual([]);
+
+		await getSession(ev({ path: '/api/session', as: 'carol' }));
+		await getSession(ev({ path: '/api/session', as: 'carol' }));
+		await getSession(ev({ path: '/api/session' }));
+
+		expect((await db.select().from(users)).map((u) => u.uid)).toEqual(['carol']);
+	});
+});
+
 describe('session endpoints', () => {
 	it('set an HttpOnly cookie on sign-in and clear it on sign-out', async () => {
 		const signedIn = await postSession(
@@ -408,7 +441,7 @@ describe('session endpoints', () => {
 		const cookie = signedIn.headers.get('set-cookie')!;
 		const signedOut = await deleteSession(ev({ method: 'DELETE', path: '/api/session' }));
 
-		expect(cookie).toMatch(/^chronicle_session=uid-alice;.*HttpOnly.*SameSite=Lax/);
+		expect(cookie).toMatch(/^runestone_session=uid-alice;.*HttpOnly.*SameSite=Lax/);
 		expect(signedOut.headers.get('set-cookie')).toMatch(/Max-Age=0/);
 	});
 

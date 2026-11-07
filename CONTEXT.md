@@ -17,7 +17,7 @@ The Firebase user whose `uid` a Project records. A Project with no Owner is anon
 On a Project, whether anyone with its URL may read it (an owned Project starts private). On a Task, whether anyone with its URL may read that Task though its Project is private. Never a way to write.
 
 **Session**:
-The `chronicle_session` cookie a signed-in browser holds, exchanged from a Firebase ID token and verified on every request. Proves who is reading; grants no writes.
+The `runestone_session` cookie (one name and Domain across sagas, chronicle and beryl) a signed-in browser holds, exchanged from a Firebase ID token and verified on every request. Proves who is reading; grants no writes.
 
 **Task**:
 One multi-step job on a Project, with its own explicit State set by agents. Identified by a server-generated UUID.

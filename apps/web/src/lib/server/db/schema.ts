@@ -133,3 +133,34 @@ export const events = pgTable(
 		index('events_task_path_seq_idx').on(table.taskId, table.path, table.seq)
 	]
 );
+
+export const apiTokens = pgTable(
+	'api_tokens',
+	{
+		id: varchar('id', { length: 36 }).primaryKey(),
+		ownerUid: varchar('owner_uid', { length: 128 }).notNull(),
+		tokenHash: char('token_hash', { length: 64 }).notNull().unique(),
+		label: varchar('label', { length: 100 }).notNull(),
+		createdAt: now('created_at'),
+		lastUsedAt: instant('last_used_at'),
+		revokedAt: instant('revoked_at')
+	},
+	(table) => [index('api_tokens_owner_idx').on(table.ownerUid)]
+);
+
+// A pending device login. Never in a Bundle: it lives minutes and holds no data worth moving.
+export const deviceCodes = pgTable('device_codes', {
+	deviceHash: char('device_hash', { length: 64 }).primaryKey(),
+	userCode: varchar('user_code', { length: 16 }).notNull().unique(),
+	label: varchar('label', { length: 100 }).notNull(),
+	ownerUid: varchar('owner_uid', { length: 128 }),
+	expiresAt: instant('expires_at').notNull()
+});
+
+// This app's own record of a signed-in user, created on the first request that verifies one.
+export const users = pgTable('users', {
+	uid: varchar('uid', { length: 128 }).primaryKey(),
+	email: varchar('email', { length: 320 }),
+	name: varchar('name', { length: 255 }),
+	createdAt: now('created_at')
+});

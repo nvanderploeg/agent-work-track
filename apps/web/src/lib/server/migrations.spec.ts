@@ -18,7 +18,8 @@ describe('migrations', () => {
 	it('leaves existing Projects anonymous and public, and Tasks private', async () => {
 		const found = await rows<{ table_name: string; column_name: string; column_default: string }>(
 			sql`select table_name, column_name, column_default from information_schema.columns
-				where table_schema = current_schema() and column_name in ('owner_uid', 'public')
+				where table_schema = current_schema() and table_name in ('projects', 'tasks')
+					and column_name in ('owner_uid', 'public')
 				order by table_name, column_name`
 		);
 		expect(found).toEqual([

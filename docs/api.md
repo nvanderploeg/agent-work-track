@@ -209,7 +209,7 @@ Writes (🔑) need `Authorization: Bearer <writeKey>` of the project that owns t
 
 Sign-in is Firebase Auth (Google popup, or an email link). The browser signs in with the Firebase
 web SDK, then `POST /api/session` swaps the ID token for a Firebase **session cookie**
-(`chronicle_session`, `HttpOnly`, `SameSite=Lax`, `Secure` under https, 5 days). The server
+(`runestone_session`, shared with the other apps under the same `AUTH_COOKIE_DOMAIN`, `HttpOnly`, `SameSite=Lax`, `Secure` under https, 5 days). The server
 verifies it on each request; the browser SDK's own state is discarded. Sign-in is off (the
 endpoints below answer as signed out, `POST /api/session` 503) until `FIREBASE_API_KEY` and a
 service account are configured; see [`usage.md`](usage.md#run-the-server).

@@ -269,13 +269,14 @@ ORIGIN=http://localhost:3000 PORT=3000 node build
 | `FIREBASE_API_KEY` | The Firebase web API key the browser signs in with. Unset: sign-in is off and the header shows no login. Public by design; it is served by `GET /api/session`. |
 | `FIREBASE_SERVICE_ACCOUNT_FILE` | Path to the Firebase service account JSON the server verifies sessions with. Wins over `FIREBASE_SERVICE_ACCOUNT`. Never put the file in the repo or the image; mount it. |
 | `FIREBASE_SERVICE_ACCOUNT` | The same JSON inline, for hosts that cannot mount a file. Must be valid JSON or the server will not start. |
+| `AUTH_COOKIE_DOMAIN` | Domain of the shared `runestone_session` cookie, e.g. `.nanzero.com`, so signing in to one app signs in to all that share it. Unset: a host-only cookie (local dev). Logout clears it with the same Domain. |
 | `FIREBASE_PROJECT_ID` | Firebase project. Default `runestone-d3a35`. |
 | `FIREBASE_AUTH_DOMAIN` | Default `<FIREBASE_PROJECT_ID>.firebaseapp.com`. |
 | `ADDRESS_HEADER`              | Header the client address is read from behind a proxy (`x-real-ip` with the bundled nginx). Unset: the socket address.                                                              |
 
 **Sign-in.** Firebase Auth identifies users; both `FIREBASE_API_KEY` and one of the service account
 variables turn it on. In the Firebase console enable the Google and Email link providers, and add
-your public domain under Authentication, Settings, Authorized domains. The email link returns to
+every parent domain you serve apps from (for example both `nanzero.com` and `merc.camp`) under Authentication, Settings, Authorized domains. The server records a user in its `users` table on their first verified request. The email link returns to
 `/login` on the same origin. A user's Projects live at `/profile`: create one, and toggle the public
 flag on each Project and Task. Anonymous use needs none of this. Rules are in
 [`api.md`](api.md#accounts-and-visibility).
