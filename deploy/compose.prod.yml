@@ -32,11 +32,15 @@ services:
       ADDRESS_HEADER: x-real-ip
       # Unset: /admin and its endpoints answer 404.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # Unset: sign-in is off and every Project is anonymous.
+      FIREBASE_API_KEY: ${FIREBASE_API_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_FILE: /run/secrets/firebase-service-account.json
       # One setting sizes the import limit and the node adapter's body limit; keep nginx in step.
       ADMIN_MAX_BUNDLE_MB: ${ADMIN_MAX_BUNDLE_MB:-256}
       BODY_SIZE_LIMIT: ${ADMIN_MAX_BUNDLE_MB:-256}M
     volumes:
       - backups:/backups
+      - ${FIREBASE_SERVICE_ACCOUNT_HOST_FILE:-/dev/null}:/run/secrets/firebase-service-account.json:ro
     ports:
       - '127.0.0.1:3280:3000'
 

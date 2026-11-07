@@ -9,6 +9,8 @@ Every package builds against this file. When behaviour and this file disagree, t
 - **Node** — a step or subtask in a task's tree, addressed by a **path** of agent-chosen keys joined by `/` (`chunk-2`, `chunk-2/tests`). Depth 1 = step.
 - **State** — a key from the project config. Each state has a **kind**.
 - **Notice** — an assumption or caveat an agent flags on a task or one of its nodes. Append-only; review marks live in the viewer's browser, never on the server.
+- **Owner** — the Firebase user (`uid`) who owns a Project. A Project without one is **anonymous**: always public, written with its write key.
+- **Public flag** — on a Project, whether anyone with its URL may read it; on a Task, whether anyone with its URL may read that Task even though its Project is private. Anonymous Projects are always public.
 - **Image** — a JPEG an agent attaches to a task or one of its nodes. The record is stored; the bytes live only in server memory and expire (see § Images).
 
 ## Types
@@ -73,6 +75,8 @@ interface Project {
 	notes: string; // '' when unset
 	links: Link[]; // ≤ 20
 	config: ProjectConfig;
+	owned: boolean; // false: anonymous. The owner's uid is never sent.
+	public: boolean; // always true when not owned
 	createdAt: string; // ISO 8601 UTC
 	lastWriteAt: string;
 }
@@ -87,6 +91,7 @@ interface Task {
 	agent: AgentInfo | null; // the lead agent
 	links: Link[]; // ≤ 20
 	prs: PullRequest[]; // ≤ 10; replaced whole on write
+	public: boolean; // readable by URL although its Project is private; false on creation
 	repo: string | null; // 'owner/name', ≤ 255 chars
 	branch: string | null; // ≤ 255 chars
 	createdAt: string;
@@ -200,6 +205,43 @@ Writes (🔑) need `Authorization: Bearer <writeKey>` of the project that owns t
 - Every `POST`, `PUT` and `PATCH` under `/api` draws from a token bucket per client address: `CHRONICLE_WRITES_PER_WINDOW` (default 120) at once, refilled at that many per `CHRONICLE_WRITE_WINDOW_MS` (default 300 000); `0` disables it. An empty bucket → 429 `{ error: 'too many writes from this address; retry later' }` with `Retry-After: <whole seconds>`, before the body or key is checked.
 - 401 `{ error: 'missing write key' }` with no bearer token; 403 `{ error: 'invalid write key' }` on mismatch; 404 `{ error: 'project not found' | 'task not found' }`; 400 for malformed ids, paths, or bodies.
 
+## Accounts and visibility
+
+Sign-in is Firebase Auth (Google popup, or an email link). The browser signs in with the Firebase
+web SDK, then `POST /api/session` swaps the ID token for a Firebase **session cookie**
+(`chronicle_session`, `HttpOnly`, `SameSite=Lax`, `Secure` under https, 5 days). The server
+verifies it on each request; the browser SDK's own state is discarded. Sign-in is off (the
+endpoints below answer as signed out, `POST /api/session` 503) until `FIREBASE_API_KEY` and a
+service account are configured; see [`usage.md`](usage.md#run-the-server).
+
+Anonymous use is unchanged: `POST /api/projects` still makes an anonymous, public Project and a
+write key.
+
+| Method | Path                    | Body                      | Success                                                                      |
+| ------ | ----------------------- | ------------------------- | ---------------------------------------------------------------------------- |
+| GET    | `/api/session`          | —                         | 200 `{ user: { uid, email, name, picture } \| null, firebase: { apiKey, authDomain, projectId } \| null }`; `no-store` |
+| POST   | `/api/session`          | `{ idToken }`             | 200 `{ user }` and `Set-Cookie`. 401 for an invalid ID token or one whose sign-in is over 5 minutes old |
+| DELETE | `/api/session`          | —                         | 200 `{ ok: true }` and a cookie that expires                                 |
+| GET    | `/api/me/projects`      | —                         | 200 `{ projects: { project, tasks }[] }`, the signed-in user's, newest write first |
+| POST   | `/api/me/projects`      | as `POST /api/projects`   | 201 as `POST /api/projects`: an owned, private Project. Its write key still works |
+| PATCH  | `/api/me/projects/:id`  | `{ public: boolean }`     | 200 `{ project }`; 404 unless the caller owns it                             |
+| PATCH  | `/api/me/tasks/:taskId` | `{ public: boolean }`     | 200 `{ task }`; 404 unless the caller owns its Project                       |
+
+`/api/me` needs the session (401 `{ error: 'sign in required' }`). `POST`, `PATCH` and `DELETE` on
+a cookie session must carry an `Origin` equal to the public origin, else 403.
+
+Read rules, for every read route (`GET /api/projects/:id`, `/stream`, `GET /api/tasks/:taskId`,
+`/events`, image files, and the `/p/…` pages):
+
+- A Project that is anonymous or public: anyone.
+- A private owned Project: only its signed-in owner; everyone else gets the 404 an unknown id gets.
+- A Task with `public: true`: anyone with its id, whatever its Project's visibility. A page for such
+  a Task shows no Project name, notes or links, and `GET /api/projects/:id/stream?task=<taskId>`
+  streams only that Task's events and Config changes.
+- Making a Project or Task private ends its open streams with `reset`.
+
+Writes to a Project still need its write key; the session grants visibility control, not writes.
+
 ## Admin
 
 Not part of the Project API: no Write key. All of it answers 404 when `ADMIN_TOKEN`
@@ -256,4 +298,4 @@ Discovery: `CHRONICLE_URL` set → only that server, never another. Otherwise pr
 
 ## Server log
 
-One logfmt line per event on stdout: `<ISO time> <event> key=value…`. Events: `image.evict` (`project task image reason=finished|idle|budget`), `stream.open` (`project ip since`), `stream.close` (`project ip reason=client|idle|error seconds`), `ratelimit` (`ip method path retry_after`), `api.fail` (`ip method path status error`), `error` (unhandled, with stack), `project.create` (`id name ip`), `task.finish` (`project task state seconds tool model tokens`). Write keys and bodies are never logged.
+One logfmt line per event on stdout: `<ISO time> <event> key=value…`. Events: `image.evict` (`project task image reason=finished|idle|budget`), `stream.open` (`project ip since`), `stream.close` (`project ip reason=client|idle|error seconds`), `ratelimit` (`ip method path retry_after`), `api.fail` (`ip method path status error`), `error` (unhandled, with stack), `identity.error` (Firebase failure other than a bad credential), `project.create` (`id name ip owned`), `task.finish` (`project task state seconds tool model tokens`). Write keys and bodies are never logged.

@@ -5,10 +5,19 @@ A live dashboard for agent work: agents report multi-step tasks to a project pag
 ## Language
 
 **Project**:
-A dashboard page. Its UUID is also the public view URL (`/p/<id>`). Holds a Config, Tasks and an event log.
+A dashboard page. Its UUID is also the public view URL (`/p/<id>`). Holds a Config, Tasks and an event log. Optionally has an Owner.
 
 **Write key**:
 The secret returned once when a Project is created; the server keeps only its sha256. Whoever holds it can write; the public URL alone is read-only.
+
+**Owner**:
+The Firebase user whose `uid` a Project records. A Project with no Owner is anonymous: always public, written with its Write key as before.
+
+**Public flag**:
+On a Project, whether anyone with its URL may read it (an owned Project starts private). On a Task, whether anyone with its URL may read that Task though its Project is private. Never a way to write.
+
+**Session**:
+The `chronicle_session` cookie a signed-in browser holds, exchanged from a Firebase ID token and verified on every request. Proves who is reading; grants no writes.
 
 **Task**:
 One multi-step job on a Project, with its own explicit State set by agents. Identified by a server-generated UUID.
@@ -41,7 +50,7 @@ A screenshot or other picture an agent attaches to a Task, or to one of its Node
 The `ADMIN_TOKEN` secret that opens `/admin`, the portal for stats, deleting Projects, and exporting or importing a Bundle. Unset: the portal does not exist (404). Unrelated to a Write key.
 
 **Bundle**:
-The zip an export produces and an import consumes: `manifest.json` and `db.ndjson`, a consistent logical dump of every Project and its Tasks, Nodes, Notices and Events. Never holds Images. Importing one replaces all data.
+The zip an export produces and an import consumes: `manifest.json` and `db.ndjson`, a consistent logical dump of every Project (with its Owner and Public flag) and its Tasks, Nodes, Notices and Events. Never holds Images. Importing one replaces all data.
 
 **Tag**:
 Short colored text attached to a Node, such as `round 2`.

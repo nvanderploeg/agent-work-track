@@ -266,7 +266,19 @@ ORIGIN=http://localhost:3000 PORT=3000 node build
 | `ADMIN_BACKUP_DIR` | Where the automatic pre-import Bundle goes; the newest five are kept. Default: the system temp directory. The image sets `/backups`, a volume in the compose files. |
 | `ADMIN_MAX_BUNDLE_MB` | Largest Bundle an import accepts, in MiB of zip. Default 256; must be a positive number or the server will not start. The node adapter also caps request bodies at `BODY_SIZE_LIMIT` (image default `256M`; a bare `node build`: 512K), and nginx at `client_max_body_size`; the compose files derive `BODY_SIZE_LIMIT` from this variable, and nginx must be raised by hand. |
 | `ADMIN_MAX_UNPACKED_MB` | Largest total unpacked size of a Bundle. Default 2048. |
+| `FIREBASE_API_KEY` | The Firebase web API key the browser signs in with. Unset: sign-in is off and the header shows no login. Public by design; it is served by `GET /api/session`. |
+| `FIREBASE_SERVICE_ACCOUNT_FILE` | Path to the Firebase service account JSON the server verifies sessions with. Wins over `FIREBASE_SERVICE_ACCOUNT`. Never put the file in the repo or the image; mount it. |
+| `FIREBASE_SERVICE_ACCOUNT` | The same JSON inline, for hosts that cannot mount a file. Must be valid JSON or the server will not start. |
+| `FIREBASE_PROJECT_ID` | Firebase project. Default `runestone-d3a35`. |
+| `FIREBASE_AUTH_DOMAIN` | Default `<FIREBASE_PROJECT_ID>.firebaseapp.com`. |
 | `ADDRESS_HEADER`              | Header the client address is read from behind a proxy (`x-real-ip` with the bundled nginx). Unset: the socket address.                                                              |
+
+**Sign-in.** Firebase Auth identifies users; both `FIREBASE_API_KEY` and one of the service account
+variables turn it on. In the Firebase console enable the Google and Email link providers, and add
+your public domain under Authentication, Settings, Authorized domains. The email link returns to
+`/login` on the same origin. A user's Projects live at `/profile`: create one, and toggle the public
+flag on each Project and Task. Anonymous use needs none of this. Rules are in
+[`api.md`](api.md#accounts-and-visibility).
 
 **External PostgreSQL.** Over a network you do not trust, use TLS and full verification:
 `DATABASE_URL=postgres://user:pw@host:5432/chronicle?sslmode=verify-full`. The `pg` driver treats
@@ -279,9 +291,9 @@ The password must be URL-safe (hex, `openssl rand -hex 24`) because it is splice
 SSE stream bus live in the process, so a second replica would miss events and could write during an
 import. Migrations at boot are safe to race (advisory lock), but that is for rolling restarts only.
 
-The local `compose.yaml` passes only `DATABASE_URL`, `ORIGIN` and `ADMIN_TOKEN` to the app; set the other
+The local `compose.yaml` passes only `DATABASE_URL`, `ORIGIN`, `ADMIN_TOKEN` and the `FIREBASE_*` variables to the app; set the other
 `CHRONICLE_*` variables when running the built app directly or through `deploy/compose.prod.yml`.
-Compose reads `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `POSTGRES_PASSWORD`
+Compose reads `FIREBASE_SERVICE_ACCOUNT_HOST_FILE` (the file to mount), `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `POSTGRES_PASSWORD`
 and `POSTGRES_PORT` from the environment.
 
 ## Simulate and captures
@@ -394,7 +406,7 @@ file's size and hash only after sending it):
 	"format": 1,
 	"service": "chronicle",
 	"appVersion": "0.1.0",
-	"schema": "0000_baseline",
+	"schema": "0001_owner_visibility",
 	"createdAt": "2026-11-06T17:00:00.000Z",
 	"files": [{ "path": "db.ndjson", "size": 123, "sha256": "…" }]
 }
@@ -407,7 +419,12 @@ continue. Each table is a header line `{"table","columns"}` followed by one JSON
 JSON columns travel as the exact text the database holds and timestamps as UTC `YYYY-MM-DD HH:MM:SS.mmm`.
 A Bundle exported by the MySQL build (schema `0000_init` to `0006_images`) imports as is.
 
-Carried: Projects (with each Write key's sha256), Tasks, Nodes, Notices and Events (so `seq` and a
+Each table's header names its columns, so a Bundle carries a Project's `owner_uid` and `public` and a
+Task's `public` (booleans as JSON `true`/`false`). A Bundle from before ownership (schema
+`0000_baseline` or the MySQL build's) imports with every Project anonymous and public and every Task
+not public; a Bundle from a build with a newer schema is refused.
+
+Carried: Projects (with each Write key's sha256 and owner), Tasks, Nodes, Notices and Events (so `seq` and a
 stream's replay stay meaningful). **Chronicle Images are not carried**: their bytes live in server
 memory and expire, so an imported Task has none and the images table is emptied.
 
