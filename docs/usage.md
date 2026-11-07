@@ -268,6 +268,17 @@ ORIGIN=http://localhost:3000 PORT=3000 node build
 | `ADMIN_MAX_UNPACKED_MB` | Largest total unpacked size of a Bundle. Default 2048. |
 | `ADDRESS_HEADER`              | Header the client address is read from behind a proxy (`x-real-ip` with the bundled nginx). Unset: the socket address.                                                              |
 
+**External PostgreSQL.** Over a network you do not trust, use TLS and full verification:
+`DATABASE_URL=postgres://user:pw@host:5432/chronicle?sslmode=verify-full`. The `pg` driver treats
+`sslmode=require`, `prefer` and `verify-ca` as `verify-full` (certificate chain and hostname) and
+warns; `sslmode=no-verify` turns verification off. Add `uselibpqcompat=true` for libpq semantics
+instead (`require` then encrypts without verifying). A private CA goes in `sslrootcert=/path/ca.pem`.
+The password must be URL-safe (hex, `openssl rand -hex 24`) because it is spliced into the URL.
+
+**One replica.** Run exactly one app instance. The Bundle import freeze, `ADMIN_BACKUP_DIR` and the
+SSE stream bus live in the process, so a second replica would miss events and could write during an
+import. Migrations at boot are safe to race (advisory lock), but that is for rolling restarts only.
+
 The local `compose.yaml` passes only `DATABASE_URL`, `ORIGIN` and `ADMIN_TOKEN` to the app; set the other
 `CHRONICLE_*` variables when running the built app directly or through `deploy/compose.prod.yml`.
 Compose reads `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `POSTGRES_PASSWORD`

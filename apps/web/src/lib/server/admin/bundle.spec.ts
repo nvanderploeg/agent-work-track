@@ -7,7 +7,9 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
+import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DATABASE_URL } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
 import { db, pool } from '#lib/server/db/index.ts';
 import { events, images, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
@@ -808,31 +810,80 @@ describe('import of a MySQL-era bundle', () => {
 		expect(text).toBe(mysqlBundle());
 	});
 
-	it('never moves seq backwards when the bundle holds older events', async () => {
-		await db
-			.insert(projects)
-			.values({ id: PROJECT, name: 'p', writeKeyHash: 'x'.repeat(64), config: {} });
-		const [late] = await db
+	const nextSeq = async () => {
+		const [row] = await db
 			.insert(events)
 			.values({ projectId: PROJECT, type: 'task', payload: {} })
 			.returning({ seq: events.seq });
+		return row.seq;
+	};
+	const setSequence = (value: number, called: boolean) =>
+		db.execute(sql`select setval('events_seq_seq', ${value}, ${called})`);
+
+	it('continues seq right after the last imported event', async () => {
+		await setSequence(1, false);
 		const path = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
 
 		await importBundle(path, { backupDir: dir });
 
-		const [next] = await db
-			.insert(events)
-			.values({ projectId: PROJECT, type: 'task', payload: {} })
-			.returning({ seq: events.seq });
-		expect(next.seq).toBeGreaterThan(late.seq);
+		expect(await nextSeq()).toBe(43);
 	});
 
-	it('maps a NUL byte in a text column to a 422', async () => {
+	it('leaves seq alone when it is already above the last imported event', async () => {
+		await setSequence(5000, true);
+		const path = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
+
+		await importBundle(path, { backupDir: dir });
+
+		expect(await nextSeq()).toBe(5001);
+	});
+
+	it('names the table, row and column of a U+0000 and refuses with a 422', async () => {
 		const path = await repack('nul.zip', {
 			[DB_FILE]: mysqlBundle().replace('"From MySQL"', '"From\\u0000MySQL"')
 		});
 
-		await rejected(importBundle(path, { backupDir: dir }), 422, /bundle rejected/);
+		await rejected(
+			importBundle(path, { backupDir: dir }),
+			422,
+			/projects row 1 column name holds U\+0000, which PostgreSQL text cannot store/
+		);
+	});
+
+	it('round trips exactly while the database defaults to another time zone', async () => {
+		const admin = new pg.Client({ connectionString: DATABASE_URL });
+		await admin.connect();
+		const name = (await admin.query('select current_database() as name')).rows[0].name;
+		await admin.query(`alter database "${name}" set timezone to 'America/Los_Angeles'`);
+		try {
+			await admin.query(
+				'select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()',
+				[name]
+			);
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			const zones = await Promise.all(
+				Array.from({ length: 10 }, async () => {
+					const client = await pool.connect();
+					try {
+						return (await client.query('show timezone')).rows[0].TimeZone;
+					} finally {
+						client.release();
+					}
+				})
+			);
+			expect(new Set(zones)).toEqual(new Set(['America/Los_Angeles']));
+			const first = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
+			await importBundle(first, { backupDir: dir });
+
+			const { db: text } = await unpack(await exportTo());
+
+			expect(text).toBe(mysqlBundle());
+			const [project] = await db.select().from(projects);
+			expect(project.createdAt.toISOString()).toBe('2026-01-02T03:04:05.678Z');
+		} finally {
+			await admin.query(`alter database "${name}" reset timezone`);
+			await admin.end();
+		}
 	});
 });
 

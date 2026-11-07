@@ -47,8 +47,7 @@ const LEGACY_SCHEMAS = [
 	'0006_images'
 ];
 
-// SQLSTATE classes a bundle's own rows can cause: 22 data exception, 23 integrity violation.
-// Anything else is the server's fault.
+// Only SQLSTATE classes 22 (data exception) and 23 (integrity violation) blame the Bundle.
 export function isRowError(error: unknown): error is Error & { code: string } {
 	const code = (error as { code?: unknown } | null)?.code;
 	return typeof code === 'string' && /^2[23]/.test(code);
@@ -93,7 +92,6 @@ function columnsOf(table: PgTable) {
 
 const INTEGER_OIDS = new Set([20, 21, 23]);
 
-// JSON and timestamps travel as the exact text the database holds; integers as numbers.
 const rawTypes = {
 	getTypeParser: (oid: number) => (INTEGER_OIDS.has(oid) ? Number : (text: string) => text)
 };
@@ -131,15 +129,15 @@ async function* dumpDatabase(conn: pg.PoolClient): AsyncGenerator<Buffer> {
 	}
 }
 
-// One REPEATABLE READ snapshot, taken by the first query, spans every table: the dump is a single
-// point in time.
-// A streamed Bundle lists its files last: sizes and hashes are known only once they are sent.
+// Read every table inside the one snapshot the first query fixes.
+// Write the manifest last: sizes and hashes exist only once the files are sent.
 export async function* exportBundle(): AsyncGenerator<Buffer> {
 	const tags = await journalTags();
 	const conn = await pool.connect();
 	let complete = false;
 	try {
 		await conn.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+		await conn.query('SET LOCAL statement_timeout = 0');
 		await conn.query('SELECT pg_current_snapshot()');
 		const hash = createHash('sha256');
 		let size = 0;
@@ -176,7 +174,6 @@ export async function* exportBundle(): AsyncGenerator<Buffer> {
 			await conn.query('ROLLBACK').catch(() => {});
 			conn.release();
 		} else {
-			// An abandoned dump may leave its cursor open; the pool must not get this connection back.
 			conn.release(true);
 		}
 	}
@@ -424,7 +421,22 @@ async function scanDatabase(path: string, entry: ZipEntry, allowEmpty: boolean):
 	}
 }
 
-// Imported rows carry their own seq; the sequence must never fall behind them or move backwards.
+function assertNoNul(
+	table: { name: string; columns: string[]; pending: unknown[][] },
+	done: number
+) {
+	table.pending.forEach((row, r) =>
+		row.forEach((value, c) => {
+			if (typeof value === 'string' && value.includes('\0')) {
+				refuse(
+					`bundle rejected: ${table.name} row ${done + r + 1} column ${table.columns[c]} holds U+0000, which PostgreSQL text cannot store`
+				);
+			}
+		})
+	);
+}
+
+// Never let the events sequence fall behind imported rows or move backwards.
 async function advanceEventSequence(conn: pg.PoolClient): Promise<void> {
 	await conn.query(
 		`SELECT setval(s.name, m.top)
@@ -470,6 +482,8 @@ export async function importBundle(
 		let imagesDropped = 0;
 		try {
 			await conn.query('BEGIN');
+			await conn.query("SET LOCAL TIME ZONE 'UTC'");
+			await conn.query('SET LOCAL statement_timeout = 0');
 			const counted = await conn.query<{ n: string }>('SELECT COUNT(*) AS n FROM "images"');
 			imagesDropped = Number(counted.rows[0].n);
 			for (const name of WIPE_ORDER) await conn.query(`DELETE FROM "${name}"`);
@@ -478,6 +492,7 @@ export async function importBundle(
 			const flush = async () => {
 				if (!table?.pending.length) return;
 				const open = table;
+				assertNoNul(open, rows[open.name]);
 				const width = open.columns.length;
 				const placeholders = open.pending
 					.map((_, r) => `(${open.columns.map((_, c) => `$${r * width + c + 1}`).join(', ')})`)
@@ -508,7 +523,6 @@ export async function importBundle(
 			await conn.query('COMMIT');
 		} catch (error) {
 			await conn.query('ROLLBACK').catch(() => {});
-			// Rolled back, so the database is as it was and the backup says nothing new.
 			await rm(backup, { force: true });
 			if (error instanceof SyntaxError) refuse('bundle rejected: db.ndjson is not valid');
 			if (error instanceof ZipError) refuse(`bundle rejected: ${error.message}`);

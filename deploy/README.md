@@ -20,3 +20,11 @@ the `backups` volume. The nginx example raises the body limit for `/api/admin/im
 
 Pin a build with `CHRONICLE_TAG=sha-<short>` to roll back. `GET /api/health` answers
 `{"service":"chronicle",...,"db":"ok"}` when the app and database are up.
+
+## Constraints
+
+- Run a single app replica: the Bundle import freeze, `ADMIN_BACKUP_DIR` and the SSE bus are per process.
+- For an external Postgres over TLS use `DATABASE_URL=postgres://user:pw@host:5432/chronicle?sslmode=verify-full`.
+  `pg` reads `sslmode=require|prefer|verify-ca` as full verification and `no-verify` as none;
+  `uselibpqcompat=true` restores libpq meanings. A private CA: `sslrootcert=/path/ca.pem`.
+  Passwords must be URL-safe (hex).

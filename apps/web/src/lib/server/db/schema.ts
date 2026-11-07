@@ -50,8 +50,7 @@ export const tasks = pgTable(
 	(table) => [index('tasks_project_created_idx').on(table.projectId, table.createdAt)]
 );
 
-// Every `path` column is `COLLATE "C"` in the migration: drizzle cannot express it, and Paths sort
-// bytewise like the dashboard's own comparison.
+// Every `path` column is COLLATE "C" in the migration; keep it so.
 export const nodes = pgTable(
 	'nodes',
 	{
