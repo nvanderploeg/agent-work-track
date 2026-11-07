@@ -7,6 +7,7 @@
 	import { Board, provideBoard } from '../ui/board.svelte.ts';
 	import type { Snapshot } from '../types.ts';
 	import { eyeColor, eyeSvg, formatTokens, tokensByModel } from '../ui/meta.ts';
+	import AccountNav from './AccountNav.svelte';
 	import Lightbox from './Lightbox.svelte';
 	import Links from './Links.svelte';
 	import NoticesTab from './NoticesTab.svelte';
@@ -88,6 +89,7 @@
 			<h1>{title}</h1>
 		</div>
 		<div class="right">
+			<AccountNav />
 			{#if projectTokens}
 				<span
 					class="tokens"

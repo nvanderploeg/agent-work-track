@@ -1,4 +1,5 @@
 <script lang="ts">
+	import AccountNav from '#lib/components/AccountNav.svelte';
 	import SiteFooter from '#lib/components/SiteFooter.svelte';
 
 	const states = [
@@ -107,6 +108,7 @@
 			<a href="#install">install</a>
 			<a href="#connect">connect</a>
 			<a href="#api">api</a>
+			<AccountNav />
 		</nav>
 	</header>
 

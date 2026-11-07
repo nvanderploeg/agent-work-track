@@ -1,0 +1,166 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { resolve } from '$app/paths';
+	import PlainPage from '#lib/components/PlainPage.svelte';
+	import { session } from '#lib/ui/session.svelte.ts';
+	import type { Project, Task } from '#lib/types.ts';
+
+	interface Owned {
+		project: Project;
+		tasks: Task[];
+	}
+
+	let owned = $state<Owned[]>([]);
+	let loaded = $state(false);
+	let name = $state('');
+	let message = $state('');
+	let failed = $state(false);
+	let created = $state<{ id: string; writeKey: string } | null>(null);
+
+	function report(text: string, bad: boolean) {
+		message = text;
+		failed = bad;
+	}
+
+	async function load() {
+		const res = await fetch('/api/me/projects');
+		if (res.ok) owned = (await res.json()).projects;
+		loaded = true;
+	}
+
+	async function send(url: string, method: string, body: unknown): Promise<Response> {
+		const res = await fetch(url, {
+			method,
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!res.ok) report((await res.json().catch(() => null))?.error ?? 'Request failed.', true);
+		return res;
+	}
+
+	async function toggleProject(entry: Owned) {
+		const res = await send(`/api/me/projects/${entry.project.id}`, 'PATCH', {
+			public: !entry.project.public
+		});
+		if (res.ok) entry.project = (await res.json()).project;
+	}
+
+	async function toggleTask(entry: Owned, task: Task) {
+		const res = await send(`/api/me/tasks/${task.id}`, 'PATCH', { public: !task.public });
+		if (!res.ok) return;
+		const updated: Task = (await res.json()).task;
+		entry.tasks = entry.tasks.map((t) => (t.id === updated.id ? updated : t));
+	}
+
+	async function create(event: SubmitEvent) {
+		event.preventDefault();
+		const res = await send('/api/me/projects', 'POST', name.trim() ? { name: name.trim() } : {});
+		if (!res.ok) return;
+		created = await res.json();
+		name = '';
+		report('', false);
+		await load();
+	}
+
+	onMount(async () => {
+		await session.load();
+		if (session.user) await load();
+		else loaded = true;
+	});
+</script>
+
+<PlainPage title="Profile">
+	{#if message}
+		<p
+			role="status"
+			data-testid="message"
+			class="rounded border p-3 {failed ? 'border-(--removed)' : 'border-(--added)'}"
+		>
+			{message}
+		</p>
+	{/if}
+
+	{#if !session.ready || !loaded}
+		<p class="text-(--muted)">Loading…</p>
+	{:else if !session.user}
+		<p data-testid="signed-out">
+			<a class="underline" href={resolve('/login')}>Log in</a> to see your projects.
+		</p>
+	{:else}
+		<p class="text-(--muted)" data-testid="who">
+			Signed in as {session.user.email ?? session.user.name ?? session.user.uid}
+		</p>
+
+		<form onsubmit={create} class="flex gap-2" data-testid="create-form">
+			<input
+				bind:value={name}
+				placeholder="New project name (optional)"
+				aria-label="New project name"
+				data-testid="project-name"
+				class="min-w-0 flex-1 rounded border border-(--line) bg-(--surface) p-2"
+			/>
+			<button class="rounded bg-(--accent) px-4 py-2 text-white" data-testid="create">Create</button
+			>
+		</form>
+
+		{#if created}
+			<p class="rounded border border-(--added) p-3 text-sm" data-testid="created">
+				Write key, shown once: <code class="break-all">{created.writeKey}</code>
+			</p>
+		{/if}
+
+		<section aria-labelledby="mine" class="space-y-3">
+			<h2 id="mine" class="text-lg font-semibold">Your projects</h2>
+			{#each owned as entry (entry.project.id)}
+				<div
+					class="space-y-2 rounded border border-(--line) bg-(--surface) p-3"
+					data-testid="owned-project"
+					data-id={entry.project.id}
+				>
+					<div class="flex items-baseline justify-between gap-4">
+						<a class="font-semibold underline" href={resolve('/p/[id]', { id: entry.project.id })}
+							>{entry.project.name}</a
+						>
+						<label class="flex items-center gap-2 text-sm">
+							<input
+								type="checkbox"
+								checked={entry.project.public}
+								onchange={() => toggleProject(entry)}
+								data-testid="project-public"
+							/>
+							Public
+						</label>
+					</div>
+					<ul class="space-y-1">
+						{#each entry.tasks as task (task.id)}
+							<li
+								class="flex items-baseline justify-between gap-4 text-sm"
+								data-testid="owned-task"
+							>
+								<a
+									class="underline"
+									href={resolve('/p/[id]/t/[taskId]', { id: entry.project.id, taskId: task.id })}
+									>{task.title}</a
+								>
+								<label class="flex items-center gap-2">
+									<input
+										type="checkbox"
+										checked={task.public}
+										disabled={entry.project.public}
+										onchange={() => toggleTask(entry, task)}
+										data-testid="task-public"
+									/>
+									{entry.project.public ? 'Public with project' : 'Public'}
+								</label>
+							</li>
+						{:else}
+							<li class="text-sm text-(--muted)">No tasks yet.</li>
+						{/each}
+					</ul>
+				</div>
+			{:else}
+				<p class="text-(--muted)" data-testid="empty">You own no projects yet.</p>
+			{/each}
+		</section>
+	{/if}
+</PlainPage>

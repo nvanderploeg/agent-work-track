@@ -48,7 +48,7 @@ function admin(): App {
 	const json = FIREBASE_SERVICE_ACCOUNT_FILE
 		? readFileSync(FIREBASE_SERVICE_ACCOUNT_FILE, 'utf8')
 		: FIREBASE_SERVICE_ACCOUNT;
-	if (!json) throw new ApiError(503, 'sign-in is not configured');
+	if (!json?.trim()) throw new ApiError(503, 'sign-in is not configured');
 	app =
 		getApps()[0] ??
 		initializeApp({ credential: cert(JSON.parse(json)), projectId: FIREBASE_PROJECT_ID });
