@@ -1,3 +1,4 @@
+import { access } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -41,6 +42,11 @@ export {
 
 const NO_PROJECT_WARNING = 'no chronicle project for this repo yet — start a task first';
 
+const LOGIN_LAPSED_WARNING =
+	'chronicle login lapsed — run `chronicle login` to track this project; continuing untracked';
+
+const lapsed: Failure = { ok: false, warning: LOGIN_LAPSED_WARNING };
+
 const unknownTask = (taskId: string): Failure => ({
 	ok: false,
 	warning: `unknown task ${taskId} on this machine — continuing untracked`
@@ -77,6 +83,7 @@ interface Target {
 	server: string;
 	projectId: string;
 	key: string | undefined;
+	owned: boolean;
 	projectUrl: string;
 }
 
@@ -232,12 +239,24 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 
 	async function createProject(
 		server: string,
-		name: string | undefined
+		name: string | undefined,
+		replacingOwned = false
 	): Promise<{ ok: true; entry: ProjectEntry } | Failure> {
+		const token = await tokenFor(server);
+		if (
+			!token &&
+			(replacingOwned ||
+				(await access(loginFile).then(
+					() => true,
+					() => false
+				)))
+		) {
+			return lapsed;
+		}
 		const reply = await send<{ id: string; writeKey?: string; name?: string; url?: string }>(
 			server,
 			'/api/projects',
-			{ method: 'POST', key: await tokenFor(server), body: compact({ name }) }
+			{ method: 'POST', key: token, body: compact({ name }) }
 		);
 		if (!reply.ok) return reply;
 		const { id, writeKey = '', url } = reply.body;
@@ -280,6 +299,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 				server: handle.server,
 				projectId: handle.projectId,
 				key: await keyFor(handle.server, entry),
+				owned: entry?.writeKey === '',
 				projectUrl:
 					handle.projectUrl ?? entry?.projectUrl ?? `${handle.server}/p/${handle.projectId}`
 			}
@@ -298,6 +318,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 				server,
 				projectId: entry.projectId,
 				key: await keyFor(server, entry),
+				owned: entry.writeKey === '',
 				projectUrl: entry.projectUrl ?? `${server}/p/${entry.projectId}`
 			}
 		};
@@ -309,7 +330,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 	async function writeTarget(taskId: string): Promise<Result<Target & { key: string }>> {
 		const target = await targetFromTask(taskId);
 		if (!target.ok) return target;
-		if (!target.value.key) return unknownTask(taskId);
+		if (!target.value.key) return target.value.owned ? lapsed : unknownTask(taskId);
 		return { ok: true, value: { ...target.value, key: target.value.key } };
 	}
 
@@ -356,12 +377,16 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 						{ method: 'POST', key: await keyFor(server, e), body }
 					);
 
+				if (!createdProject && !entry.writeKey && !(await keyFor(server, entry))) return lapsed;
+
 				let reply = await post(entry);
-				if (!reply.ok && !createdProject && [401, 403, 404].includes(reply.status ?? 0)) {
+				const owned = !entry.writeKey;
+				const rejected = owned ? [404] : [401, 403, 404];
+				if (!reply.ok && !createdProject && rejected.includes(reply.status ?? 0)) {
 					const replaced = await store.resolveProject(
 						server,
 						repoKey,
-						() => createProject(server, input.project),
+						() => createProject(server, input.project, owned),
 						entry
 					);
 					if (!replaced.ok) return replaced;

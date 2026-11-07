@@ -307,3 +307,106 @@ describe('logout', () => {
 		expect(await makeClient().logout()).toMatchObject({ ok: false });
 	});
 });
+
+describe('lapsed login', () => {
+	function projectServer(tasks: () => { status: number; body: unknown }) {
+		reply = (req) => {
+			if (req.method === 'POST' && req.path === '/api/projects') {
+				return { status: 201, body: { id: 'p1', name: 'Mine', url: `${url}/p/p1`, config: {} } };
+			}
+			if (req.path === '/api/projects/p1/tasks') return tasks();
+			return { status: 404, body: { error: 'not found' } };
+		};
+	}
+	const ok = () => ({ status: 201, body: { taskId: 't1', url: `${url}/p/p1/t/t1` } });
+	const createCalls = () =>
+		requests.filter((r) => r.method === 'POST' && r.path === '/api/projects').length;
+	const registry = () =>
+		JSON.parse(fs.readFileSync(path.join(configDir, 'projects.json'), 'utf8'))[url];
+
+	async function ownedProject() {
+		seedLogin();
+		projectServer(ok);
+		await makeClient().startTask({ title: 'T', cwd: configDir });
+		requests.length = 0;
+	}
+
+	it('never replaces an owned project with a public one when logged out', async () => {
+		await ownedProject();
+		fs.rmSync(loginFile);
+
+		const result = await makeClient().startTask({ title: 'T', cwd: configDir });
+
+		expect(result).toMatchObject({ ok: false, warning: expect.stringContaining('login lapsed') });
+		expect(createCalls()).toBe(0);
+		expect(Object.values(registry())).toEqual([expect.objectContaining({ writeKey: '' })]);
+	});
+
+	it('never replaces an owned project when the login file is damaged', async () => {
+		await ownedProject();
+		fs.writeFileSync(loginFile, '{"refreshTok');
+
+		const result = await makeClient().startTask({ title: 'T', cwd: configDir });
+
+		expect(result).toMatchObject({ ok: false, warning: expect.stringContaining('login lapsed') });
+		expect(createCalls()).toBe(0);
+	});
+
+	it('never replaces an owned project when the refresh fails', async () => {
+		await ownedProject();
+		const client = createClient({
+			env: {},
+			configDir,
+			loginFile,
+			candidates: [url],
+			requestTimeoutMs: 1000,
+			identityUrls: { signIn: `${url}/nope`, refresh: `${url}/nope` }
+		});
+
+		const result = await client.startTask({ title: 'T', cwd: configDir });
+
+		expect(result).toMatchObject({ ok: false, warning: expect.stringContaining('login lapsed') });
+		expect(createCalls()).toBe(0);
+	});
+
+	it('does not create a first project without a token while a login file exists', async () => {
+		fs.mkdirSync(path.dirname(loginFile), { recursive: true });
+		fs.writeFileSync(loginFile, 'damaged');
+		projectServer(ok);
+
+		const result = await makeClient().startTask({ title: 'T', cwd: configDir });
+
+		expect(result).toMatchObject({ ok: false, warning: expect.stringContaining('login lapsed') });
+		expect(createCalls()).toBe(0);
+	});
+
+	it('does not replace an owned project the server rejects with 403', async () => {
+		await ownedProject();
+		projectServer(() => ({ status: 403, body: { error: 'forbidden' } }));
+
+		const result = await makeClient().startTask({ title: 'T', cwd: configDir });
+
+		expect(result).toMatchObject({ ok: false });
+		expect(createCalls()).toBe(0);
+	});
+
+	it('does not replace a project on a 503', async () => {
+		await ownedProject();
+		projectServer(() => ({ status: 503, body: { error: 'down' } }));
+		const before = registry();
+
+		const result = await makeClient().startTask({ title: 'T', cwd: configDir });
+
+		expect(result).toMatchObject({ ok: false });
+		expect(createCalls()).toBe(0);
+		expect(registry()).toEqual(before);
+	});
+
+	it('reports the lapse, not an unknown task, when writing to an owned task', async () => {
+		seedTask();
+
+		const result = await makeClient().updateTask({ taskId: 't1', note: 'a' });
+
+		expect(result).toMatchObject({ ok: false, warning: expect.stringContaining('login lapsed') });
+	});
+});
