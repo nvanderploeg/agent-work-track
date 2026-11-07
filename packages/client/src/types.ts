@@ -128,6 +128,7 @@ export interface Image {
 export interface ClientOptions {
 	env?: Record<string, string | undefined>;
 	configDir?: string;
+	loginFile?: string; // default `${XDG_CONFIG_HOME ?? ~/.config}/runestone/login.json`
 	fetch?: typeof fetch;
 	candidates?: string[];
 	probeTimeoutMs?: number;

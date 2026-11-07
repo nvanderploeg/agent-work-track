@@ -16,14 +16,15 @@ export interface TaskHandle {
 	projectUrl?: string;
 }
 
-// A Firebase refresh token: it never expires on its own, so the file is as sensitive as a password.
-export interface TokenEntry {
+// The Runestone login file, shared by every Runestone tool on the machine. The refresh token
+// never expires on its own, so the file is as sensitive as a password.
+export interface Login {
 	refreshToken: string;
-	apiKey: string;
-	label?: string;
+	uid: string;
+	email?: string;
+	projectId: string;
 }
 
-export type TokensFile = Record<string, TokenEntry>;
 export type ProjectsFile = Record<string, Record<string, ProjectEntry>>;
 export type TasksFile = Record<string, TaskHandle>;
 
@@ -51,6 +52,36 @@ async function readJson<T>(path: string): Promise<Record<string, T>> {
 	}
 	return parsed as Record<string, T>;
 }
+
+export async function readLogin(path: string): Promise<Login | null> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(await readFile(path, 'utf8'));
+	} catch {
+		return null;
+	}
+	const login = parsed as Partial<Login> | null;
+	if (
+		typeof login?.refreshToken !== 'string' ||
+		typeof login.uid !== 'string' ||
+		typeof login.projectId !== 'string'
+	) {
+		return null;
+	}
+	return {
+		refreshToken: login.refreshToken,
+		uid: login.uid,
+		...(typeof login.email === 'string' && { email: login.email }),
+		projectId: login.projectId
+	};
+}
+
+export const writeLogin = (path: string, login: Login): Promise<void> => writeJson(path, login);
+
+export const removeLogin = (path: string): Promise<void> =>
+	unlink(path).catch((error: NodeJS.ErrnoException) => {
+		if (error.code !== 'ENOENT') throw error;
+	});
 
 async function writeJson(path: string, data: unknown): Promise<void> {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -115,7 +146,6 @@ export type Resolved<F> = { ok: true; entry: ProjectEntry; created: boolean } | 
 export function createStore(configDir: string) {
 	const projectsPath = join(configDir, 'projects.json');
 	const tasksPath = join(configDir, 'tasks.json');
-	const tokensPath = join(configDir, 'tokens.json');
 	const lockPath = join(configDir, '.lock');
 
 	async function putProject(server: string, repoKey: string, entry: ProjectEntry): Promise<void> {
@@ -131,19 +161,6 @@ export function createStore(configDir: string) {
 			await readJson(tasksPath);
 		},
 		readTasks: () => readJson<TaskHandle>(tasksPath),
-		readTokens: () => readJson<TokenEntry>(tokensPath),
-		saveToken: (server: string, entry: TokenEntry) =>
-			withLock(lockPath, async () => {
-				const tokens = await readJson<TokenEntry>(tokensPath);
-				tokens[server] = entry;
-				await writeJson(tokensPath, tokens);
-			}),
-		removeToken: (server: string) =>
-			withLock(lockPath, async () => {
-				const tokens = await readJson<TokenEntry>(tokensPath);
-				delete tokens[server];
-				await writeJson(tokensPath, tokens);
-			}),
 		saveProject: (server: string, repoKey: string, entry: ProjectEntry) =>
 			withLock(lockPath, () => putProject(server, repoKey, entry)),
 		saveTask: (taskId: string, handle: TaskHandle) =>

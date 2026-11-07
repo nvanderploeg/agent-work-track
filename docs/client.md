@@ -10,6 +10,7 @@ export const UNREACHABLE_WARNING = 'chronicle unreachable — continuing untrack
 
 export interface ClientOptions {
 	env?: Record<string, string | undefined>; // default process.env
+	loginFile?: string; // default `${XDG_CONFIG_HOME ?? ~/.config}/runestone/login.json`
 	configDir?: string; // default `${XDG_CONFIG_HOME ?? ~/.config}/chronicle`, read from `env`
 	fetch?: typeof fetch; // default globalThis.fetch
 	candidates?: string[]; // default DEFAULT_CANDIDATES
@@ -122,9 +123,9 @@ export interface ChronicleClient {
 	projectUrl(input: { taskId?: string; cwd?: string }): Promise<Result<{ url: string }>>;
 	doctor(input?: { cwd?: string }): Promise<DoctorReport>;
 	// Device login (docs/api.md § Device login): shows a code via onCode, waits for approval,
-	// stores a Firebase refresh token in <configDir>/tokens.json (mode 0600).
+	// writes the Runestone login file (§ Runestone login file).
 	login(input?: { label?: string; onCode?: (code: LoginCode) => void }): Promise<Result<{ server: string }>>;
-	// DELETE /api/token (signs the user's tools out), then forgets the local credential.
+	// DELETE /api/me/agents (signs the user's agents out), then removes the login file.
 	logout(): Promise<Result<{ server: string; revoked: boolean }>>;
 }
 
@@ -138,6 +139,24 @@ export function repoFromRemote(remote: string): string | undefined; // last two 
 ```
 
 Also export the `Tag`, `AgentInfo`, `Link`, `Project`, `Task`, `Node`, `Image`, `ProjectConfig`, `ConfigPatch`, `StateDef` types exactly as `docs/api.md` defines them.
+
+### Runestone login file
+
+One login serves every Runestone tool on a machine (chronicle, beryl, command-center). The file is
+`$XDG_CONFIG_HOME/runestone/login.json` (default `~/.config/runestone/login.json`), mode 0600 in a
+directory of mode 0700, holding the Firebase refresh token:
+
+```json
+{ "refreshToken": "string", "uid": "string", "email": "string (optional)", "projectId": "string" }
+```
+
+- Written atomically (temp file, then rename); never edited in place.
+- Read on every use, never cached across calls: another tool may have rewritten or removed it. A
+  missing, unparseable or incomplete file reads as logged out.
+- The refresh token is used only against a server whose `GET /api/auth/config` reports the same
+  `projectId`; the Firebase web `apiKey` comes from that endpoint, not from the file.
+- A rotated refresh token replaces the file's only if the file still holds the token that was refreshed.
+- `login` writes it after trading the custom token; `logout` removes it.
 
 Behaviour:
 

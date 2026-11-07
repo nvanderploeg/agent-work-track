@@ -129,6 +129,7 @@ function makeClient(url: string) {
 	return createClient({
 		env: { CHRONICLE_URL: url },
 		configDir,
+		loginFile: path.join(configDir, 'runestone', 'login.json'),
 		probeTimeoutMs: 1000,
 		requestTimeoutMs: 5000
 	});

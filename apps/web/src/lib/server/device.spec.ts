@@ -69,7 +69,8 @@ const json = async (response: Response) => response.json() as Promise<Record<str
 
 const start = async (label = 'my laptop') =>
 	json(await startDevice(ev({ method: 'POST', path: '/api/auth/device', body: { label } })));
-const poll = (deviceCode: string) => pollDevice(ev({ method: 'POST', path: '/api/auth/device/token', key: deviceCode }));
+const poll = (deviceCode: string) =>
+	pollDevice(ev({ method: 'POST', path: '/api/auth/device/token', key: deviceCode }));
 const approve = (userCode: string, as?: string, approved = true) =>
 	answerDevice(
 		ev({ method: 'POST', path: '/api/me/device', as, body: { userCode, approve: approved } })
@@ -139,7 +140,9 @@ describe('device login', () => {
 
 	it('rejects an unknown device code and a missing one', async () => {
 		expect((await poll('nope')).status).toBe(410);
-		expect((await pollDevice(ev({ method: 'POST', path: '/api/auth/device/token' }))).status).toBe(401);
+		expect((await pollDevice(ev({ method: 'POST', path: '/api/auth/device/token' }))).status).toBe(
+			401
+		);
 	});
 
 	it('shows the approver which tool is asking', async () => {

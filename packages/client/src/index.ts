@@ -2,7 +2,14 @@ import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { DEFAULT_CANDIDATES, createDiscovery } from './discovery.ts';
-import { createStore, own, type ProjectEntry } from './files.ts';
+import {
+	createStore,
+	own,
+	readLogin,
+	removeLogin,
+	writeLogin,
+	type ProjectEntry
+} from './files.ts';
 import { UNREACHABLE_WARNING, compact, request, type Failure, type RequestInit } from './http.ts';
 import { encodeImage } from './image.ts';
 import { fetchPr, isFinalPr, prTarget, runCommand } from './prs.ts';
@@ -47,6 +54,18 @@ interface IdentityReply {
 	id_token?: string;
 	refresh_token?: string;
 	expires_in?: string;
+}
+
+// The Firebase ID token's own claims: who signed in and for which project.
+function claimsOf(idToken: string | undefined) {
+	try {
+		const payload = JSON.parse(Buffer.from(idToken!.split('.')[1], 'base64url').toString('utf8'));
+		const { sub: uid, aud: projectId, email } = payload;
+		if (typeof uid !== 'string' || typeof projectId !== 'string') return null;
+		return { uid, projectId, email: typeof email === 'string' ? email : undefined };
+	} catch {
+		return null;
+	}
 }
 
 const unreachable: Failure = { ok: false, warning: UNREACHABLE_WARNING };
@@ -99,6 +118,9 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 	const configDir =
 		options.configDir ?? join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'chronicle');
 	const store = createStore(configDir);
+	const loginFile =
+		options.loginFile ??
+		join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'runestone', 'login.json');
 	const discovery = createDiscovery({
 		fetch: fetchFn,
 		env,
@@ -127,7 +149,8 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 	}
 
 	// Owned Projects carry no write key; the user's API token for that server writes them.
-	const idTokens = new Map<string, { idToken: string; expiresAt: number }>();
+	const idTokens = new Map<string, { idToken: string; refreshToken: string; expiresAt: number }>();
+	const webKeys = new Map<string, { apiKey: string; projectId: string }>();
 	const identity = options.identityUrls ?? {
 		signIn: 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken',
 		refresh: 'https://securetoken.googleapis.com/v1/token'
@@ -150,29 +173,52 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 		}
 	}
 
+	async function webKeyFor(server: string): Promise<{ apiKey: string; projectId: string } | null> {
+		const known = webKeys.get(server);
+		if (known) return known;
+		const reply = await send<{ apiKey: string; projectId: string }>(server, '/api/auth/config', {
+			method: 'GET'
+		});
+		if (!reply.ok) return null;
+		webKeys.set(server, reply.body);
+		return reply.body;
+	}
+
 	// The Firebase ID token this machine sends as the bearer, refreshed shortly before it expires.
+	// The login file is read on every call: another Runestone tool may have replaced it.
 	async function tokenFor(server: string): Promise<string | undefined> {
+		const login = await readLogin(loginFile);
+		if (!login) return undefined;
 		const cached = idTokens.get(server);
-		if (cached && cached.expiresAt - Date.now() > EXPIRY_MARGIN_MS) return cached.idToken;
-		const stored = own(await store.readTokens().catch(() => ({})), server);
-		if (!stored) return undefined;
-		const body = await identityCall(identity.refresh, stored.apiKey, {
+		if (
+			cached &&
+			cached.refreshToken === login.refreshToken &&
+			cached.expiresAt - Date.now() > EXPIRY_MARGIN_MS
+		) {
+			return cached.idToken;
+		}
+		const web = await webKeyFor(server);
+		if (!web || web.projectId !== login.projectId) return undefined;
+		const body = await identityCall(identity.refresh, web.apiKey, {
 			method: 'POST',
 			headers: { 'content-type': 'application/x-www-form-urlencoded' },
 			body: new URLSearchParams({
 				grant_type: 'refresh_token',
-				refresh_token: stored.refreshToken
+				refresh_token: login.refreshToken
 			}).toString()
 		});
 		if (!body?.id_token) return undefined;
+		const refreshToken = body.refresh_token || login.refreshToken;
 		idTokens.set(server, {
 			idToken: body.id_token,
+			refreshToken,
 			expiresAt: Date.now() + Number(body.expires_in ?? 3600) * 1000
 		});
-		if (body.refresh_token && body.refresh_token !== stored.refreshToken) {
-			await store
-				.saveToken(server, { ...stored, refreshToken: body.refresh_token })
-				.catch(() => {});
+		if (refreshToken !== login.refreshToken) {
+			const current = await readLogin(loginFile);
+			if (current?.refreshToken === login.refreshToken) {
+				await writeLogin(loginFile, { ...current, refreshToken }).catch(() => {});
+			}
 		}
 		return body.id_token;
 	}
@@ -584,7 +630,7 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 				verificationUrl: string;
 				expiresIn: number;
 				interval: number;
-			}>(server, '/api/device', {
+			}>(server, '/api/auth/device', {
 				method: 'POST',
 				body: { label: input.label ?? `chronicle on ${hostname()}` }
 			});
@@ -596,8 +642,8 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 				await sleep(options.loginPollMs ?? interval * 1000);
 				const polled = await send<{ status: string; customToken?: string; apiKey?: string }>(
 					server,
-					'/api/device',
-					{ method: 'GET', key: deviceCode }
+					'/api/auth/device/token',
+					{ method: 'POST', key: deviceCode }
 				);
 				if (!polled.ok) return polled;
 				const { customToken, apiKey } = polled.body;
@@ -610,17 +656,19 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 					if (!signedIn?.refreshToken) {
 						return { ok: false, warning: 'Firebase refused the login; try again' };
 					}
-					await store.saveToken(server, {
+					const claims = claimsOf(signedIn.idToken);
+					if (!claims) return { ok: false, warning: 'Firebase refused the login; try again' };
+					await writeLogin(loginFile, {
 						refreshToken: signedIn.refreshToken,
-						apiKey,
-						label: input.label
+						uid: claims.uid,
+						...(claims.email && { email: claims.email }),
+						projectId: claims.projectId
 					});
-					if (signedIn.idToken) {
-						idTokens.set(server, {
-							idToken: signedIn.idToken,
-							expiresAt: Date.now() + Number(signedIn.expiresIn ?? 3600) * 1000
-						});
-					}
+					idTokens.set(server, {
+						idToken: signedIn.idToken!,
+						refreshToken: signedIn.refreshToken,
+						expiresAt: Date.now() + Number(signedIn.expiresIn ?? 3600) * 1000
+					});
 					return { ok: true, value: { server } };
 				}
 			}
@@ -632,18 +680,14 @@ export function createClient(options: ClientOptions = {}): ChronicleClient {
 		return guard(async () => {
 			const server = await discovery.discover();
 			if (!server) return unreachable;
-			if (!own(await store.readTokens().catch(() => ({})), server)) {
-				return { ok: false, warning: 'not logged in on this server' };
-			}
+			if (!(await readLogin(loginFile))) return { ok: false, warning: 'not logged in' };
 			const token = await tokenFor(server);
-			if (!token) {
-				await store.removeToken(server);
-				return { ok: true, value: { server, revoked: false } };
-			}
-			const reply = await send(server, '/api/token', { method: 'DELETE', key: token });
-			await store.removeToken(server);
-			idTokens.delete(server);
-			return { ok: true, value: { server, revoked: reply.ok } };
+			const reply = token
+				? await send(server, '/api/me/agents', { method: 'DELETE', key: token })
+				: undefined;
+			await removeLogin(loginFile);
+			idTokens.clear();
+			return { ok: true, value: { server, revoked: reply?.ok ?? false } };
 		});
 	}
 

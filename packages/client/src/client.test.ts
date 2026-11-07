@@ -182,6 +182,7 @@ function makeClient(options: Partial<ClientOptions> = {}) {
 	return createClient({
 		env: {},
 		configDir,
+		loginFile: path.join(configDir, 'runestone', 'login.json'),
 		candidates: [DEAD],
 		probeTimeoutMs: 200,
 		requestTimeoutMs: 200,

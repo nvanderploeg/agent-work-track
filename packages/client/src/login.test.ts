@@ -18,9 +18,11 @@ let url: string;
 let requests: Recorded[];
 let reply: (req: Recorded) => { status: number; body: unknown };
 let configDir: string;
+let loginFile: string;
 
 beforeEach(async () => {
 	configDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'login-')));
+	loginFile = path.join(configDir, 'runestone', 'login.json');
 	requests = [];
 	refreshes = 0;
 	reply = () => ({ status: 404, body: { error: 'not found' } });
@@ -36,7 +38,12 @@ beforeEach(async () => {
 				body: raw.startsWith('{') ? JSON.parse(raw) : raw || undefined
 			};
 			requests.push(rec);
-			const out = rec.path === '/api/health' ? healthy() : (identity(rec) ?? reply(rec));
+			const out =
+				rec.path === '/api/health'
+					? healthy()
+					: rec.path === '/api/auth/config'
+						? { status: 200, body: { apiKey: 'web-key', projectId: 'runestone-d3a35' } }
+						: (identity(rec) ?? reply(rec));
 			res.writeHead(out.status, { 'content-type': 'application/json' });
 			res.end(JSON.stringify(out.body));
 		});
@@ -56,7 +63,7 @@ function identity(req: Recorded) {
 	if (path === '/identity/signIn') {
 		return {
 			status: 200,
-			body: { idToken: 'id-1', refreshToken: 'refresh-1', expiresIn: '3600' }
+			body: { idToken: jwt(CLAIMS), refreshToken: 'refresh-1', expiresIn: '3600' }
 		};
 	}
 	if (path === '/identity/refresh') {
@@ -69,24 +76,33 @@ function identity(req: Recorded) {
 	return undefined;
 }
 
+const jwt = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
+const CLAIMS = { sub: 'uid-1', aud: 'runestone-d3a35', email: 'a@b.test' };
+const LOGIN = { refreshToken: 'refresh-1', uid: 'uid-1', projectId: 'runestone-d3a35' };
+
 const healthy = () => ({ status: 200, body: { service: 'chronicle', version: '1', db: 'ok' } });
 
 const makeClient = () =>
 	createClient({
 		env: {},
 		configDir,
+		loginFile,
 		candidates: [url],
 		loginPollMs: 5,
 		requestTimeoutMs: 1000,
 		identityUrls: { signIn: `${url}/identity/signIn`, refresh: `${url}/identity/refresh` }
 	});
 
-const tokens = () => JSON.parse(fs.readFileSync(path.join(configDir, 'tokens.json'), 'utf8'));
+const stored = () => JSON.parse(fs.readFileSync(loginFile, 'utf8'));
+const seedLogin = (login: object = LOGIN) => {
+	fs.mkdirSync(path.dirname(loginFile), { recursive: true });
+	fs.writeFileSync(loginFile, JSON.stringify(login));
+};
 
 function deviceServer(polls: number) {
 	let left = polls;
 	reply = (req) => {
-		if (req.method === 'POST' && req.path === '/api/device') {
+		if (req.method === 'POST' && req.path === '/api/auth/device') {
 			return {
 				status: 201,
 				body: {
@@ -98,7 +114,7 @@ function deviceServer(polls: number) {
 				}
 			};
 		}
-		if (req.method === 'GET' && req.path === '/api/device') {
+		if (req.method === 'POST' && req.path === '/api/auth/device/token') {
 			return left-- > 0
 				? { status: 202, body: { status: 'pending' } }
 				: { status: 200, body: { status: 'approved', customToken: 'custom', apiKey: 'web-key' } };
@@ -119,29 +135,28 @@ describe('login', () => {
 
 		expect(result).toEqual({ ok: true, value: { server: url } });
 		expect(codes).toEqual([`${url}/device?code=ABCD-2345 ABCD-2345`]);
-		const polls = requests.filter((r) => r.method === 'GET' && r.path === '/api/device');
+		const polls = requests.filter((r) => r.path === '/api/auth/device/token');
 		expect(polls).toHaveLength(3);
 		expect(polls[0].headers.authorization).toBe('Bearer dev-secret');
-		expect(requests.find((r) => r.method === 'POST')?.body).toEqual({ label: 'laptop' });
+		expect(requests.find((r) => r.path === '/api/auth/device')?.body).toEqual({ label: 'laptop' });
 		const signIn = requests.find((r) => r.path.startsWith('/identity/signIn'));
 		expect(signIn?.path).toBe('/identity/signIn?key=web-key');
 		expect(signIn?.body).toEqual({ token: 'custom', returnSecureToken: true });
-		expect(tokens()).toEqual({
-			[url]: { refreshToken: 'refresh-1', apiKey: 'web-key', label: 'laptop' }
-		});
-		expect(fs.statSync(path.join(configDir, 'tokens.json')).mode & 0o777).toBe(0o600);
+		expect(stored()).toEqual({ ...LOGIN, email: 'a@b.test' });
+		expect(fs.statSync(loginFile).mode & 0o777).toBe(0o600);
+		expect(fs.statSync(path.dirname(loginFile)).mode & 0o777).toBe(0o700);
 	});
 
 	it('reports a denied or expired login without storing anything', async () => {
 		reply = (req) =>
-			req.method === 'POST'
+			req.path === '/api/auth/device'
 				? deviceBody()
 				: { status: 410, body: { error: 'the login expired or was denied; start again' } };
 
 		const result = await makeClient().login();
 
 		expect(result).toMatchObject({ ok: false });
-		expect(fs.existsSync(path.join(configDir, 'tokens.json'))).toBe(false);
+		expect(fs.existsSync(loginFile)).toBe(false);
 	});
 });
 
@@ -171,10 +186,7 @@ function seedTask() {
 
 describe('ID tokens', () => {
 	it('are refreshed once and reused until shortly before they expire', async () => {
-		fs.writeFileSync(
-			path.join(configDir, 'tokens.json'),
-			JSON.stringify({ [url]: { refreshToken: 'refresh-1', apiKey: 'web-key' } })
-		);
+		seedLogin({ ...LOGIN, refreshToken: 'refresh-1' });
 		reply = () => ({ status: 200, body: { task: { id: 't1' } } });
 		seedTask();
 		const client = makeClient();
@@ -186,15 +198,13 @@ describe('ID tokens', () => {
 	});
 
 	it('stop being sent once Firebase refuses the refresh token', async () => {
-		fs.writeFileSync(
-			path.join(configDir, 'tokens.json'),
-			JSON.stringify({ [url]: { refreshToken: 'revoked', apiKey: 'web-key' } })
-		);
+		seedLogin({ ...LOGIN, refreshToken: 'revoked' });
 		reply = () => ({ status: 200, body: { task: { id: 't1' } } });
 		seedTask();
 		const client = createClient({
 			env: {},
 			configDir,
+			loginFile,
 			candidates: [url],
 			requestTimeoutMs: 1000,
 			identityUrls: { signIn: `${url}/nope`, refresh: `${url}/nope` }
@@ -207,12 +217,46 @@ describe('ID tokens', () => {
 	});
 });
 
+describe('login file', () => {
+	it('is re-read on every use, so a login by another Runestone tool takes effect at once', async () => {
+		seedLogin({ ...LOGIN, refreshToken: 'refresh-a' });
+		reply = () => ({ status: 200, body: { task: { id: 't1' } } });
+		seedTask();
+		const client = makeClient();
+		await client.updateTask({ taskId: 't1', note: 'a' });
+
+		seedLogin({ ...LOGIN, refreshToken: 'refresh-b' });
+		await client.updateTask({ taskId: 't1', note: 'b' });
+
+		const refreshed = requests.filter((r) => r.path.startsWith('/identity/refresh'));
+		expect(refreshed.map((r) => r.body)).toEqual([
+			'grant_type=refresh_token&refresh_token=refresh-a',
+			'grant_type=refresh_token&refresh_token=refresh-b'
+		]);
+	});
+
+	it('is ignored when it belongs to another Firebase project', async () => {
+		seedLogin({ ...LOGIN, projectId: 'elsewhere' });
+		reply = () => ({ status: 200, body: { task: { id: 't1' } } });
+		seedTask();
+
+		const result = await makeClient().updateTask({ taskId: 't1', note: 'a' });
+
+		expect(result).toMatchObject({ ok: false });
+		expect(refreshes).toBe(0);
+	});
+
+	it('reads as logged out while damaged', async () => {
+		fs.mkdirSync(path.dirname(loginFile), { recursive: true });
+		fs.writeFileSync(loginFile, '{"refreshTok');
+
+		expect(await makeClient().logout()).toMatchObject({ ok: false });
+	});
+});
+
 describe('owned projects', () => {
 	it('are created and written with a refreshed Firebase ID token, never a write key', async () => {
-		fs.writeFileSync(
-			path.join(configDir, 'tokens.json'),
-			JSON.stringify({ [url]: { refreshToken: 'refresh-1', apiKey: 'web-key' } })
-		);
+		seedLogin({ ...LOGIN, refreshToken: 'refresh-1' });
 		reply = (req) => {
 			if (req.path === '/api/projects') {
 				return { status: 201, body: { id: 'p1', name: 'Mine', url: `${url}/p/p1`, config: {} } };
@@ -244,19 +288,19 @@ describe('owned projects', () => {
 });
 
 describe('logout', () => {
-	it('signs the user out at the server and forgets the refresh token locally', async () => {
-		fs.writeFileSync(
-			path.join(configDir, 'tokens.json'),
-			JSON.stringify({ [url]: { refreshToken: 'refresh-1', apiKey: 'web-key' } })
-		);
+	it('signs the user out at the server and removes the login file', async () => {
+		seedLogin({ ...LOGIN, refreshToken: 'refresh-1' });
 		reply = () => ({ status: 200, body: { ok: true } });
 
 		const result = await makeClient().logout();
 
 		expect(result).toEqual({ ok: true, value: { server: url, revoked: true } });
 		const revoke = requests.find((r) => r.method === 'DELETE');
-		expect([revoke?.path, revoke?.headers.authorization]).toEqual(['/api/token', 'Bearer id-r1']);
-		expect(tokens()).toEqual({});
+		expect([revoke?.path, revoke?.headers.authorization]).toEqual([
+			'/api/me/agents',
+			'Bearer id-r1'
+		]);
+		expect(fs.existsSync(loginFile)).toBe(false);
 	});
 
 	it('says so when nobody is logged in', async () => {
