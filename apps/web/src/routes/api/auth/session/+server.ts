@@ -1,13 +1,9 @@
 import type { RequestHandler } from './$types';
 import { ApiError, readBody, route } from '#lib/server/api.ts';
-import { createSession, SESSION_MAX_AGE_SECONDS, webConfig } from '#lib/server/identity.ts';
-import { sessionCookieHeader, requireSameOrigin, viewerOf } from '#lib/server/viewer.ts';
+import { createSession, SESSION_MAX_AGE_SECONDS } from '#lib/server/identity.ts';
+import { sessionCookieHeader, requireSameOrigin } from '#lib/server/viewer.ts';
 
 const noStore = { 'cache-control': 'no-store' };
-
-export const GET: RequestHandler = route(async ({ request }) =>
-	Response.json({ user: await viewerOf(request), firebase: webConfig() }, { headers: noStore })
-);
 
 export const POST: RequestHandler = route(async ({ request, url }) => {
 	requireSameOrigin(request, url);

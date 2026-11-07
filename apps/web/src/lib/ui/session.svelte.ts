@@ -9,6 +9,7 @@ interface WebConfig {
 	apiKey: string;
 	authDomain: string;
 	projectId: string;
+	appId?: string;
 }
 
 const EMAIL_KEY = 'chronicle.emailForSignIn';
@@ -27,12 +28,9 @@ class Session {
 
 	async refresh(): Promise<void> {
 		try {
-			const res = await fetch('/api/session');
-			if (res.ok) {
-				const body = await res.json();
-				this.user = body.user;
-				this.config = body.firebase;
-			}
+			const [me, config] = await Promise.all([fetch('/api/me'), fetch('/api/auth/config')]);
+			if (me.ok) this.user = (await me.json()).user;
+			this.config = config.ok ? await config.json() : null;
 		} finally {
 			this.ready = true;
 		}
@@ -55,7 +53,7 @@ class Session {
 		credential: { user: { getIdToken(): Promise<string> } }
 	): Promise<void> {
 		const idToken = await credential.user.getIdToken();
-		const res = await fetch('/api/session', {
+		const res = await fetch('/api/auth/session', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ idToken })
@@ -104,7 +102,7 @@ class Session {
 	}
 
 	async signOut(): Promise<void> {
-		await fetch('/api/session', { method: 'DELETE' });
+		await fetch('/api/auth/session', { method: 'DELETE' });
 		this.user = null;
 	}
 }

@@ -90,12 +90,16 @@ export const variables = defineEnvVars({
 			return json;
 		}
 	},
-	FIREBASE_API_KEY: {
+	FIREBASE_WEB_API_KEY: {
 		description: 'Firebase web API key the browser signs in with. Unset: sign-in is off.',
 		schema: (value) => value?.trim() || undefined
 	},
 	FIREBASE_AUTH_DOMAIN: {
-		description: 'Firebase auth domain. Unset: `<FIREBASE_PROJECT_ID>.firebaseapp.com`.',
+		description: 'Firebase auth domain.',
+		schema: (value) => value?.trim() || 'runestone-d3a35.firebaseapp.com'
+	},
+	FIREBASE_APP_ID: {
+		description: 'Firebase web app id, passed to the browser SDK. Unset: omitted.',
 		schema: (value) => value?.trim() || undefined
 	},
 	AUTH_COOKIE_DOMAIN: {

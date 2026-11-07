@@ -31,14 +31,15 @@ services:
       # Unset: /admin and its endpoints answer 404.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       # Sign-in is on only with both: the web API key and a service account file mounted below.
-      FIREBASE_API_KEY: ${FIREBASE_API_KEY:-}
+      FIREBASE_WEB_API_KEY: ${FIREBASE_WEB_API_KEY:-}
+      FIREBASE_APP_ID: ${FIREBASE_APP_ID:-}
       AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-}
       FIREBASE_SERVICE_ACCOUNT_FILE: /run/secrets/firebase-service-account.json
       ADMIN_MAX_BUNDLE_MB: ${ADMIN_MAX_BUNDLE_MB:-256}
       BODY_SIZE_LIMIT: ${ADMIN_MAX_BUNDLE_MB:-256}M
     volumes:
       - backups:/backups
-      - ${FIREBASE_SERVICE_ACCOUNT_HOST_FILE:-/dev/null}:/run/secrets/firebase-service-account.json:ro
+      - ${FIREBASE_SERVICE_ACCOUNT_HOST_PATH:-/dev/null}:/run/secrets/firebase-service-account.json:ro
 volumes:
   pgdata:
   backups:

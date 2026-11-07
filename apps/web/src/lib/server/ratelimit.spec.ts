@@ -105,6 +105,13 @@ describe('limitWrites', () => {
 		expect(limitWrites(limiter, event('GET', '/p/p'))).toBeUndefined();
 	});
 
+	it('never limits the device poll, which repeats until a login is approved', () => {
+		const limiter = createRateLimiter(1, 60_000);
+		limitWrites(limiter, event('POST', '/api/projects'));
+
+		expect(limitWrites(limiter, event('POST', '/api/auth/device/token'))).toBeUndefined();
+	});
+
 	it('limits each client address on its own', () => {
 		const limiter = createRateLimiter(1, 60_000);
 		limitWrites(limiter, event('POST', '/api/projects', '10.0.0.1'));

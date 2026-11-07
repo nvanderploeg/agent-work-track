@@ -208,10 +208,10 @@ Writes (🔑) need `Authorization: Bearer <writeKey>` of the project that owns t
 ## Accounts and visibility
 
 Sign-in is Firebase Auth (Google popup, or an email link). The browser signs in with the Firebase
-web SDK, then `POST /api/session` swaps the ID token for a Firebase **session cookie**
+web SDK, then `POST /api/auth/session` swaps the ID token for a Firebase **session cookie**
 (`runestone_session`, shared with the other apps under the same `AUTH_COOKIE_DOMAIN`, `HttpOnly`, `SameSite=Lax`, `Secure` under https, 5 days). The server
 verifies it on each request; the browser SDK's own state is discarded. Sign-in is off (the
-endpoints below answer as signed out, `POST /api/session` 503) until `FIREBASE_API_KEY` and a
+endpoints below answer as signed out, `POST /api/auth/session` 503) until `FIREBASE_WEB_API_KEY` and a
 service account are configured; see [`usage.md`](usage.md#run-the-server).
 
 Anonymous use is unchanged: `POST /api/projects` without a token still makes an anonymous, public
@@ -219,15 +219,16 @@ Project and a write key.
 
 | Method | Path                    | Body                      | Success                                                                      |
 | ------ | ----------------------- | ------------------------- | ---------------------------------------------------------------------------- |
-| GET    | `/api/session`          | —                         | 200 `{ user: { uid, email, name, picture } \| null, firebase: { apiKey, authDomain, projectId } \| null }`; `no-store` |
-| POST   | `/api/session`          | `{ idToken }`             | 200 `{ user }` and `Set-Cookie`. 401 for an invalid ID token or one whose sign-in is over 5 minutes old |
-| DELETE | `/api/session`          | —                         | 200 `{ ok: true }` and a cookie that expires                                 |
+| GET    | `/api/auth/config`      | —                         | 200 `{ apiKey, authDomain, projectId, appId? }`, the Firebase web config; 503 while sign-in is off; `no-store` |
+| POST   | `/api/auth/session`     | `{ idToken }`             | 200 `{ user }` and `Set-Cookie`. 401 for an invalid ID token or one whose sign-in is over 5 minutes old |
+| DELETE | `/api/auth/session`     | —                         | 200 `{ ok: true }` and a cookie that expires                                 |
+| GET    | `/api/me`               | —                         | 200 `{ user: { uid, email, name, picture } \| null }`; `no-store`             |
 | GET    | `/api/me/projects`      | —                         | 200 `{ projects: { project, tasks }[] }`, the signed-in user's, newest write first |
 | POST   | `/api/me/projects`      | as `POST /api/projects`   | 201 `{ id, name, url, config }`: an owned, private Project; no write key is issued |
 | PATCH  | `/api/me/projects/:id`  | `{ public: boolean }`     | 200 `{ project }`; 404 unless the caller owns it                             |
 | PATCH  | `/api/me/tasks/:taskId` | `{ public: boolean }`     | 200 `{ task }`; 404 unless the caller owns its Project                       |
 
-`/api/me` needs the session (401 `{ error: 'sign in required' }`). `POST`, `PATCH` and `DELETE` on
+The rest of `/api/me/…` needs the session (401 `{ error: 'sign in required' }`). `POST`, `PATCH` and `DELETE` on
 a cookie session must carry an `Origin` equal to the public origin, else 403.
 
 Read rules, for every read route (`GET /api/projects/:id`, `/stream`, `GET /api/tasks/:taskId`,
@@ -256,12 +257,11 @@ token, keeps that, and sends ID tokens minted from it (`securetoken.googleapis.c
 
 | Method | Path                   | Body                       | Success                                                                                                                  |
 | ------ | ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| POST   | `/api/device`          | `{ label? }` (≤ 100 chars) | 201 `{ deviceCode, userCode, verificationUrl, expiresIn, interval }`; the code lives 10 minutes                          |
-| GET    | `/api/device`          | bearer `<deviceCode>`      | 202 `{ status: 'pending' }`; 200 `{ status: 'approved', customToken, apiKey }` once, then 410; 410 expired, denied or unknown |
-| GET    | `/api/me/device?code=` | —                          | 200 `{ label, expiresAt }` for a pending code; 404 otherwise                                                             |
-| POST   | `/api/me/device`       | `{ userCode, approve }`    | 200 `{ ok: true }`; 404 when no pending code matches. Denying deletes the code                                           |
-| DELETE | `/api/me/tools`        | —                          | 200 `{ ok: true }`: revokes the user's Firebase refresh tokens, signing out every tool                                   |
-| DELETE | `/api/token`           | bearer ID token            | 200 `{ ok: true }`: the same, called by a tool (`chronicle logout`)                                                      |
+| POST   | `/api/auth/device`       | `{ label? }` (≤ 100 chars) | 201 `{ deviceCode, userCode, verificationUrl, expiresIn, interval }`; the code lives 10 minutes                          |
+| POST   | `/api/auth/device/token` | bearer `<deviceCode>`      | 202 `{ status: 'pending' }`; 200 `{ status: 'approved', customToken, apiKey }` once, then 410; 410 expired, denied or unknown. Exempt from the write limit |
+| GET    | `/api/me/device?code=`   | —                          | 200 `{ label, expiresAt }` for a pending code; 404 otherwise                                                             |
+| POST   | `/api/me/device`         | `{ userCode, approve }`    | 200 `{ ok: true }`; 404 when no pending code matches. Denying deletes the code                                           |
+| DELETE | `/api/me/agents`         | session cookie, or bearer ID token | 200 `{ ok: true }`: revokes the user's Firebase refresh tokens, signing out every agent; a tool calls it as `chronicle logout` |
 
 The user approves at `/device?code=<userCode>` (signed in); `userCode` is `XXXX-XXXX` and is matched
 ignoring case and the dash. Revocation is per user, not per tool: it also ends the user's tools in

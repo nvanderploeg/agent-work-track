@@ -25,14 +25,14 @@ vi.mock('#lib/server/identity.ts', () => ({
 			: null
 }));
 
-const { POST: startDevice, GET: pollDevice } = await import('../../routes/api/device/+server.ts');
+const { POST: startDevice } = await import('../../routes/api/auth/device/+server.ts');
+const { POST: pollDevice } = await import('../../routes/api/auth/device/token/+server.ts');
 const { GET: lookupDevice, POST: answerDevice } =
 	await import('../../routes/api/me/device/+server.ts');
 const { POST: postProject } = await import('../../routes/api/projects/+server.ts');
 const { PATCH: patchProject } = await import('../../routes/api/projects/[id]/+server.ts');
 const { POST: postTask } = await import('../../routes/api/projects/[id]/tasks/+server.ts');
-const { DELETE: revokeSelf } = await import('../../routes/api/token/+server.ts');
-const { DELETE: revokeTools } = await import('../../routes/api/me/tools/+server.ts');
+const { DELETE: revokeTools } = await import('../../routes/api/me/agents/+server.ts');
 const { GET: getProject } = await import('../../routes/api/projects/[id]/+server.ts');
 
 const ORIGIN = 'http://localhost';
@@ -68,8 +68,8 @@ function ev({ method = 'GET', path, as, body, key, params = {}, origin = ORIGIN 
 const json = async (response: Response) => response.json() as Promise<Record<string, any>>;
 
 const start = async (label = 'my laptop') =>
-	json(await startDevice(ev({ method: 'POST', path: '/api/device', body: { label } })));
-const poll = (deviceCode: string) => pollDevice(ev({ path: '/api/device', key: deviceCode }));
+	json(await startDevice(ev({ method: 'POST', path: '/api/auth/device', body: { label } })));
+const poll = (deviceCode: string) => pollDevice(ev({ method: 'POST', path: '/api/auth/device/token', key: deviceCode }));
 const approve = (userCode: string, as?: string, approved = true) =>
 	answerDevice(
 		ev({ method: 'POST', path: '/api/me/device', as, body: { userCode, approve: approved } })
@@ -139,7 +139,7 @@ describe('device login', () => {
 
 	it('rejects an unknown device code and a missing one', async () => {
 		expect((await poll('nope')).status).toBe(410);
-		expect((await pollDevice(ev({ path: '/api/device' }))).status).toBe(401);
+		expect((await pollDevice(ev({ method: 'POST', path: '/api/auth/device/token' }))).status).toBe(401);
 	});
 
 	it('shows the approver which tool is asking', async () => {
@@ -225,10 +225,12 @@ describe('ID token bearers', () => {
 	});
 
 	it('stop working once the user revokes their tools, by token or from the profile', async () => {
-		const byTool = await revokeSelf(
-			ev({ method: 'DELETE', path: '/api/token', key: idTokenFor('alice') })
+		const byTool = await revokeTools(
+			ev({ method: 'DELETE', path: '/api/me/agents', key: idTokenFor('alice') })
 		);
-		const byProfile = await revokeTools(ev({ method: 'DELETE', path: '/api/me/tools', as: 'bob' }));
+		const byProfile = await revokeTools(
+			ev({ method: 'DELETE', path: '/api/me/agents', as: 'bob' })
+		);
 
 		expect([byTool.status, byProfile.status]).toEqual([200, 200]);
 		expect(revoked).toEqual(['alice', 'bob']);
@@ -236,9 +238,9 @@ describe('ID token bearers', () => {
 	});
 
 	it('cannot revoke tools without a session or from another origin', async () => {
-		const anonymous = await revokeTools(ev({ method: 'DELETE', path: '/api/me/tools' }));
+		const anonymous = await revokeTools(ev({ method: 'DELETE', path: '/api/me/agents' }));
 		const cross = await revokeTools(
-			ev({ method: 'DELETE', path: '/api/me/tools', as: 'bob', origin: 'https://evil.test' })
+			ev({ method: 'DELETE', path: '/api/me/agents', as: 'bob', origin: 'https://evil.test' })
 		);
 
 		expect([anonymous.status, cross.status]).toEqual([401, 403]);

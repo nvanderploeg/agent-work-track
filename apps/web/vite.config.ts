@@ -9,7 +9,7 @@ export default defineConfig(({ mode, command }) => {
 	if (mode === 'test') {
 		process.env.ADMIN_TOKEN ??= 'test-admin-token-0123456789';
 		process.env.DATABASE_URL ??= 'postgres://chronicle:chronicle@127.0.0.1:5436/chronicle_test';
-		process.env.FIREBASE_API_KEY ??= 'test-api-key';
+		process.env.FIREBASE_WEB_API_KEY ??= 'test-api-key';
 		process.env.FIREBASE_SERVICE_ACCOUNT ??= '{"project_id":"test"}';
 	}
 	if (mode === 'development') {

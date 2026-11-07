@@ -44,12 +44,18 @@ export function createRateLimiter(perWindow: number, windowMs: number) {
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// The device poll repeats every few seconds until approval; it reads, so it draws no write token.
+const DEVICE_POLL_PATH = '/api/auth/device/token';
 
 export function limitWrites(
 	limiter: ReturnType<typeof createRateLimiter>,
 	event: { request: Request; url: URL; getClientAddress: () => string }
 ): Response | undefined {
-	if (!WRITE_METHODS.has(event.request.method) || !isUnder(event.url.pathname, '/api')) {
+	if (
+		!WRITE_METHODS.has(event.request.method) ||
+		!isUnder(event.url.pathname, '/api') ||
+		event.url.pathname === DEVICE_POLL_PATH
+	) {
 		return undefined;
 	}
 	const verdict = limiter.take(event.getClientAddress());

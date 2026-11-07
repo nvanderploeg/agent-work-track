@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import {
-	FIREBASE_API_KEY,
+	FIREBASE_WEB_API_KEY,
+	FIREBASE_APP_ID,
 	FIREBASE_AUTH_DOMAIN,
 	FIREBASE_PROJECT_ID,
 	FIREBASE_SERVICE_ACCOUNT,
@@ -22,6 +23,7 @@ export interface WebConfig {
 	apiKey: string;
 	authDomain: string;
 	projectId: string;
+	appId?: string;
 }
 
 export const SESSION_MAX_AGE_SECONDS = 5 * 24 * 60 * 60;
@@ -29,15 +31,16 @@ export const SESSION_MAX_AGE_SECONDS = 5 * 24 * 60 * 60;
 const FRESH_SECONDS = 5 * 60;
 
 export const signInEnabled = Boolean(
-	FIREBASE_API_KEY && (FIREBASE_SERVICE_ACCOUNT_FILE || FIREBASE_SERVICE_ACCOUNT)
+	FIREBASE_WEB_API_KEY && (FIREBASE_SERVICE_ACCOUNT_FILE || FIREBASE_SERVICE_ACCOUNT)
 );
 
 export function webConfig(): WebConfig | null {
 	if (!signInEnabled) return null;
 	return {
-		apiKey: FIREBASE_API_KEY!,
-		authDomain: FIREBASE_AUTH_DOMAIN ?? `${FIREBASE_PROJECT_ID}.firebaseapp.com`,
-		projectId: FIREBASE_PROJECT_ID
+		apiKey: FIREBASE_WEB_API_KEY!,
+		authDomain: FIREBASE_AUTH_DOMAIN,
+		projectId: FIREBASE_PROJECT_ID,
+		...(FIREBASE_APP_ID && { appId: FIREBASE_APP_ID })
 	};
 }
 

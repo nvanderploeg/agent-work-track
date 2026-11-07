@@ -52,7 +52,7 @@
 	}
 
 	async function disconnectTools() {
-		const res = await send('/api/me/tools', 'DELETE', undefined);
+		const res = await send('/api/me/agents', 'DELETE', undefined);
 		if (res.ok) report('Every connected tool was signed out.', false);
 	}
 

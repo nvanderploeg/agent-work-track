@@ -18,9 +18,9 @@ docker compose -p chronicle --env-file deploy/chronicle.env -f deploy/compose.pr
 [`docs/usage.md`](../docs/usage.md#admin-portal-and-migrating-hosts)). Pre-import backups land in
 the `backups` volume. The nginx example raises the body limit for `/api/admin/import` only.
 
-**Sign-in.** `FIREBASE_API_KEY` and a service account turn on Firebase Auth (see
+**Sign-in.** `FIREBASE_WEB_API_KEY` and a service account turn on Firebase Auth (see
 [`docs/usage.md`](../docs/usage.md#run-the-server)). Keep the service account JSON outside the
-repo and the image: `FIREBASE_SERVICE_ACCOUNT_HOST_FILE` in `chronicle.env` names it on the host and
+repo and the image: `FIREBASE_SERVICE_ACCOUNT_HOST_PATH` in `chronicle.env` names it on the host and
 the compose file mounts it read-only into the app as `FIREBASE_SERVICE_ACCOUNT_FILE`. Where a file
 cannot be mounted, set `FIREBASE_SERVICE_ACCOUNT` to the JSON instead. Without it, the mount is
 `/dev/null` and sign-in stays off.

@@ -266,15 +266,16 @@ ORIGIN=http://localhost:3000 PORT=3000 node build
 | `ADMIN_BACKUP_DIR` | Where the automatic pre-import Bundle goes; the newest five are kept. Default: the system temp directory. The image sets `/backups`, a volume in the compose files. |
 | `ADMIN_MAX_BUNDLE_MB` | Largest Bundle an import accepts, in MiB of zip. Default 256; must be a positive number or the server will not start. The node adapter also caps request bodies at `BODY_SIZE_LIMIT` (image default `256M`; a bare `node build`: 512K), and nginx at `client_max_body_size`; the compose files derive `BODY_SIZE_LIMIT` from this variable, and nginx must be raised by hand. |
 | `ADMIN_MAX_UNPACKED_MB` | Largest total unpacked size of a Bundle. Default 2048. |
-| `FIREBASE_API_KEY` | The Firebase web API key the browser signs in with. Unset: sign-in is off and the header shows no login. Public by design; it is served by `GET /api/session`. |
+| `FIREBASE_WEB_API_KEY` | The Firebase web API key the browser signs in with. Unset: sign-in is off and the header shows no login. Public by design; it is served by `GET /api/auth/config`. |
 | `FIREBASE_SERVICE_ACCOUNT_FILE` | Path to the Firebase service account JSON the server verifies sessions with. Wins over `FIREBASE_SERVICE_ACCOUNT`. Never put the file in the repo or the image; mount it. |
 | `FIREBASE_SERVICE_ACCOUNT` | The same JSON inline, for hosts that cannot mount a file. Must be valid JSON or the server will not start. |
 | `AUTH_COOKIE_DOMAIN` | Domain of the shared `runestone_session` cookie, e.g. `.nanzero.com`, so signing in to one app signs in to all that share it. Unset: a host-only cookie (local dev). Logout clears it with the same Domain. |
 | `FIREBASE_PROJECT_ID` | Firebase project. Default `runestone-d3a35`. |
-| `FIREBASE_AUTH_DOMAIN` | Default `<FIREBASE_PROJECT_ID>.firebaseapp.com`. |
+| `FIREBASE_AUTH_DOMAIN` | Default `runestone-d3a35.firebaseapp.com`. |
+| `FIREBASE_APP_ID` | Firebase web app id, passed to the browser SDK. Optional. |
 | `ADDRESS_HEADER`              | Header the client address is read from behind a proxy (`x-real-ip` with the bundled nginx). Unset: the socket address.                                                              |
 
-**Sign-in.** Firebase Auth identifies users; both `FIREBASE_API_KEY` and one of the service account
+**Sign-in.** Firebase Auth identifies users; both `FIREBASE_WEB_API_KEY` and one of the service account
 variables turn it on. In the Firebase console enable the Google and Email link providers, and add
 every parent domain you serve apps from (for example both `nanzero.com` and `merc.camp`) under Authentication, Settings, Authorized domains. The server records a user in its `users` table on their first verified request. The email link returns to
 `/login` on the same origin. A user's Projects live at `/profile`: create one, and toggle the public
@@ -294,7 +295,7 @@ import. Migrations at boot are safe to race (advisory lock), but that is for rol
 
 The local `compose.yaml` passes only `DATABASE_URL`, `ORIGIN`, `ADMIN_TOKEN` and the `FIREBASE_*` variables to the app; set the other
 `CHRONICLE_*` variables when running the built app directly or through `deploy/compose.prod.yml`.
-Compose reads `FIREBASE_SERVICE_ACCOUNT_HOST_FILE` (the file to mount), `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `POSTGRES_PASSWORD`
+Compose reads `FIREBASE_SERVICE_ACCOUNT_HOST_PATH` (the file to mount), `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `POSTGRES_PASSWORD`
 and `POSTGRES_PORT` from the environment.
 
 ## Simulate and captures

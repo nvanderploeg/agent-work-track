@@ -40,11 +40,10 @@ const { GET: getTask } = await import('../../routes/api/tasks/[taskId]/+server.t
 const { GET: getEvents } = await import('../../routes/api/tasks/[taskId]/events/+server.ts');
 const { POST: postImage } = await import('../../routes/api/tasks/[taskId]/images/+server.ts');
 const { GET: getImage } = await import('../../routes/api/images/[imageId]/[file]/+server.ts');
-const {
-	GET: getSession,
-	POST: postSession,
-	DELETE: deleteSession
-} = await import('../../routes/api/session/+server.ts');
+const { POST: postSession, DELETE: deleteSession } =
+	await import('../../routes/api/auth/session/+server.ts');
+const { GET: getMe } = await import('../../routes/api/me/+server.ts');
+const { GET: getAuthConfig } = await import('../../routes/api/auth/config/+server.ts');
 const { GET: listMine, POST: createMine } = await import('../../routes/api/me/projects/+server.ts');
 const { PATCH: patchMine } = await import('../../routes/api/me/projects/[id]/+server.ts');
 const { PATCH: patchMyTask } = await import('../../routes/api/me/tasks/[taskId]/+server.ts');
@@ -431,9 +430,9 @@ describe('the shared session cookie', () => {
 	it('records the signed-in user once, on the first verified request', async () => {
 		expect(await db.select().from(users)).toEqual([]);
 
-		await getSession(ev({ path: '/api/session', as: 'carol' }));
-		await getSession(ev({ path: '/api/session', as: 'carol' }));
-		await getSession(ev({ path: '/api/session' }));
+		await getMe(ev({ path: '/api/me', as: 'carol' }));
+		await getMe(ev({ path: '/api/me', as: 'carol' }));
+		await getMe(ev({ path: '/api/me' }));
 
 		expect((await db.select().from(users)).map((u) => u.uid)).toEqual(['carol']);
 	});
@@ -442,10 +441,10 @@ describe('the shared session cookie', () => {
 describe('session endpoints', () => {
 	it('set an HttpOnly cookie on sign-in and clear it on sign-out', async () => {
 		const signedIn = await postSession(
-			ev({ method: 'POST', path: '/api/session', body: { idToken: 'alice' } })
+			ev({ method: 'POST', path: '/api/auth/session', body: { idToken: 'alice' } })
 		);
 		const cookie = signedIn.headers.get('set-cookie')!;
-		const signedOut = await deleteSession(ev({ method: 'DELETE', path: '/api/session' }));
+		const signedOut = await deleteSession(ev({ method: 'DELETE', path: '/api/auth/session' }));
 
 		expect(cookie).toMatch(/^runestone_session=uid-alice;.*HttpOnly.*SameSite=Lax/);
 		expect(signedOut.headers.get('set-cookie')).toMatch(/Max-Age=0/);
@@ -455,23 +454,24 @@ describe('session endpoints', () => {
 		const cross = await postSession(
 			ev({
 				method: 'POST',
-				path: '/api/session',
+				path: '/api/auth/session',
 				body: { idToken: 'x' },
 				origin: 'https://evil.test'
 			})
 		);
-		const empty = await postSession(ev({ method: 'POST', path: '/api/session', body: {} }));
+		const empty = await postSession(ev({ method: 'POST', path: '/api/auth/session', body: {} }));
 
 		expect(cross.status).toBe(403);
 		expect(empty.status).toBe(400);
 	});
 
 	it('report who is signed in and how the browser signs in', async () => {
-		const body = await json(await getSession(ev({ path: '/api/session', as: 'alice' })));
-		const anonymous = await json(await getSession(ev({ path: '/api/session' })));
+		const body = await json(await getMe(ev({ path: '/api/me', as: 'alice' })));
+		const anonymous = await json(await getMe(ev({ path: '/api/me' })));
+		const config = await json(await getAuthConfig(ev({ path: '/api/auth/config' })));
 
 		expect(body.user.uid).toBe('alice');
-		expect(body.firebase).toEqual({ apiKey: 'k', authDomain: 'd', projectId: 'p' });
 		expect(anonymous.user).toBeNull();
+		expect(config).toEqual({ apiKey: 'k', authDomain: 'd', projectId: 'p' });
 	});
 });
