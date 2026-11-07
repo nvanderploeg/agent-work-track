@@ -6,6 +6,8 @@
 
 	let code = $state('');
 	let label = $state('');
+	let requesterIp = $state<string | null>(null);
+	let startedSecondsAgo = $state(0);
 	let message = $state('');
 	let failed = $state(false);
 	let answered = $state(false);
@@ -14,10 +16,17 @@
 	async function lookup() {
 		label = '';
 		const res = await fetch(`/api/me/device?code=${encodeURIComponent(code)}`);
-		if (res.ok) label = (await res.json()).label;
-		else {
+		if (res.ok) {
+			const body = await res.json();
+			label = body.label;
+			requesterIp = body.requesterIp ?? null;
+			startedSecondsAgo = body.startedSecondsAgo ?? 0;
+		} else {
 			failed = true;
-			message = 'No pending login for that code. It may have expired.';
+			message =
+				res.status === 429
+					? 'Too many attempts. Wait a minute and try again.'
+					: 'No pending login for that code. It may have expired.';
 		}
 	}
 
@@ -39,9 +48,7 @@
 	}
 
 	onMount(async () => {
-		code = new URLSearchParams(location.search).get('code') ?? '';
 		await session.load();
-		if (session.user && code) await lookup();
 	});
 </script>
 
@@ -85,7 +92,12 @@
 		{#if label}
 			<section class="space-y-3 rounded border border-(--line) bg-(--surface) p-4">
 				<p data-testid="asking">
-					<strong>{label}</strong> wants to write projects as you.
+					A tool calling itself <strong>{label}</strong> (the name is chosen by whoever started the login,
+					so it is not verified) wants to write projects as you.
+				</p>
+				<p class="text-sm text-(--muted)" data-testid="origin">
+					Started {startedSecondsAgo} seconds ago{requesterIp ? ` from ${requesterIp}` : ''}.
+					Approve only if you started it just now.
 				</p>
 				<div class="flex gap-3">
 					<button

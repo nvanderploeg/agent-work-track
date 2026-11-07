@@ -1,14 +1,19 @@
 import type { RequestHandler } from './$types';
 import { ApiError, readBody, route } from '#lib/server/api.ts';
-import { answerDevice, deviceByUserCode } from '#lib/server/device.ts';
+import { answerDevice, deviceByUserCode, limitLookup } from '#lib/server/device.ts';
 import { requireSameOrigin, requireViewer } from '#lib/server/viewer.ts';
 
 export const GET: RequestHandler = route(async ({ request, url }) => {
-	await requireViewer(request);
+	limitLookup((await requireViewer(request)).uid);
 	const row = await deviceByUserCode(url.searchParams.get('code') ?? '');
 	if (!row || row.ownerUid) throw new ApiError(404, 'no pending login for that code');
 	return Response.json(
-		{ label: row.label, expiresAt: row.expiresAt.toISOString() },
+		{
+			label: row.label,
+			expiresAt: row.expiresAt.toISOString(),
+			requesterIp: row.requesterIp,
+			startedSecondsAgo: Math.max(0, Math.round((Date.now() - row.createdAt.getTime()) / 1000))
+		},
 		{ headers: { 'cache-control': 'no-store' } }
 	);
 });

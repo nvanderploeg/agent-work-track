@@ -1,11 +1,12 @@
 import type { RequestHandler } from './$types';
 import { ApiError, route } from '#lib/server/api.ts';
-import { bearer, pollDevice } from '#lib/server/device.ts';
+import { bearer, limitPoll, pollDevice } from '#lib/server/device.ts';
 import { webConfig } from '#lib/server/identity.ts';
 
 const noStore = { 'cache-control': 'no-store' };
 
-export const POST: RequestHandler = route(async ({ request }) => {
+export const POST: RequestHandler = route(async ({ request, getClientAddress }) => {
+	limitPoll(getClientAddress());
 	const deviceCode = bearer(request);
 	if (!deviceCode) throw new ApiError(401, 'missing device code');
 	const result = await pollDevice(deviceCode);

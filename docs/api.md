@@ -258,12 +258,12 @@ token, keeps that, and sends ID tokens minted from it (`securetoken.googleapis.c
 | Method | Path                   | Body                       | Success                                                                                                                  |
 | ------ | ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | POST   | `/api/auth/device`       | `{ label? }` (≤ 100 chars) | 201 `{ deviceCode, userCode, verificationUrl, expiresIn, interval }`; the code lives 10 minutes                          |
-| POST   | `/api/auth/device/token` | bearer `<deviceCode>`      | 202 `{ status: 'pending' }`; 200 `{ status: 'approved', customToken, apiKey }` once, then 410; 410 expired, denied or unknown. Exempt from the write limit |
-| GET    | `/api/me/device?code=`   | —                          | 200 `{ label, expiresAt }` for a pending code; 404 otherwise                                                             |
+| POST   | `/api/auth/device/token` | bearer `<deviceCode>`      | 202 `{ status: 'pending' }`; 200 `{ status: 'approved', customToken, apiKey }` once, then 410; 410 expired, denied or unknown. Exempt from the write limit; 429 past 120 a minute per address; 503 when Firebase cannot mint the token (the approval stays) |
+| GET    | `/api/me/device?code=`   | —                          | 200 `{ label, expiresAt, requesterIp, startedSecondsAgo }` for a pending code; 404 otherwise; 429 past 10 a minute per user                                                            |
 | POST   | `/api/me/device`         | `{ userCode, approve }`    | 200 `{ ok: true }`; 404 when no pending code matches. Denying deletes the code                                           |
-| DELETE | `/api/me/agents`         | session cookie, or bearer ID token | 200 `{ ok: true }`: revokes the user's Firebase refresh tokens, signing out every agent; a tool calls it as `chronicle logout` |
+| DELETE | `/api/me/agents`         | session cookie, or bearer ID token | 200 `{ ok: true }`: revokes the user's Firebase refresh tokens, signing out every agent; `DELETE /api/auth/session` does the same for the cookie's user, so sign-out ends every session, agent and open stream; a tool calls it as `chronicle logout` |
 
-The user approves at `/device?code=<userCode>` (signed in); `userCode` is `XXXX-XXXX` and is matched
+The user types `userCode` at `/device` (signed in) after checking the requester's address and age; the page never reads the code from the URL; `userCode` is `XXXX-XXXX` and is matched
 ignoring case and the dash. Revocation is per user, not per tool: it also ends the user's tools in
 the other apps that share the Firebase project, and takes effect at the next request.
 

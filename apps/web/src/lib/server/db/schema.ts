@@ -140,6 +140,9 @@ export const deviceCodes = pgTable('device_codes', {
 	userCode: varchar('user_code', { length: 16 }).notNull().unique(),
 	label: varchar('label', { length: 100 }).notNull(),
 	ownerUid: varchar('owner_uid', { length: 128 }),
+	requesterIp: varchar('requester_ip', { length: 64 }),
+	requesterAgent: varchar('requester_agent', { length: 255 }),
+	createdAt: now('created_at'),
 	expiresAt: instant('expires_at').notNull()
 });
 

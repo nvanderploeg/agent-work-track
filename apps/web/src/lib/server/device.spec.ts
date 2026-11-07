@@ -94,7 +94,7 @@ describe('device login', () => {
 		const done = await poll(device.deviceCode);
 		const again = await poll(device.deviceCode);
 
-		expect(device.verificationUrl).toBe(`${ORIGIN}/device?code=${device.userCode}`);
+		expect(device.verificationUrl).toBe(`${ORIGIN}/device`);
 		expect(waiting.status).toBe(202);
 		expect(anonymous.status).toBe(401);
 		expect(approved.status).toBe(200);

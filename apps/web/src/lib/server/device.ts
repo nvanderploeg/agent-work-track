@@ -4,12 +4,29 @@ import { ApiError } from '#lib/server/api.ts';
 import { db } from '#lib/server/db/index.ts';
 import { deviceCodes } from '#lib/server/db/schema.ts';
 import { customTokenFor, isIdToken, verifyBearer, type Viewer } from '#lib/server/identity.ts';
+import { createRateLimiter } from '#lib/server/ratelimit.ts';
+import { log } from '#lib/server/log.ts';
 import { recordUser } from '#lib/server/users.ts';
 
 export const DEVICE_TTL_MS = 10 * 60 * 1000;
 export const DEVICE_POLL_SECONDS = 3;
 // No 0/O/1/I: a user code is read off one screen and typed into another.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+// Lookups guess a user code, so a signed-in user gets a few a minute; polls repeat every few seconds, so an address gets many.
+const lookups = createRateLimiter(10, 60_000);
+const polls = createRateLimiter(120, 60_000);
+
+function limited(verdict: ReturnType<typeof lookups.take>): void {
+	if (!verdict.ok) {
+		throw new ApiError(429, 'too many attempts; retry later', {
+			retryAfterMs: verdict.retryAfterMs
+		});
+	}
+}
+
+export const limitLookup = (uid: string) => limited(lookups.take(uid));
+export const limitPoll = (ip: string) => limited(polls.take(ip));
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -46,14 +63,22 @@ export const normaliseUserCode = (code: string): string =>
 		.replace(/[^A-Z0-9]/g, '')
 		.replace(/^(.{4})(.+)$/, '$1-$2');
 
-export async function startDevice(label: string) {
+export async function startDevice(
+	label: string,
+	requester: { ip?: string; userAgent?: string } = {}
+) {
 	await db.delete(deviceCodes).where(lt(deviceCodes.expiresAt, new Date()));
 	const deviceCode = randomBytes(32).toString('base64url');
 	const userCode = newUserCode();
 	const expiresAt = new Date(Date.now() + DEVICE_TTL_MS);
-	await db
-		.insert(deviceCodes)
-		.values({ deviceHash: sha256(deviceCode), userCode, label, expiresAt });
+	await db.insert(deviceCodes).values({
+		deviceHash: sha256(deviceCode),
+		userCode,
+		label,
+		requesterIp: requester.ip?.slice(0, 64),
+		requesterAgent: requester.userAgent?.slice(0, 255),
+		expiresAt
+	});
 	return { deviceCode, userCode, expiresAt };
 }
 
@@ -92,16 +117,23 @@ export async function answerDevice(userCode: string, uid: string | null): Promis
 export type DevicePoll =
 	{ status: 'pending' } | { status: 'gone' } | { status: 'approved'; customToken: string };
 
-/** An approved code is spent by the poll that sees it: it mints the custom token and removes the row. */
+/** The custom token is minted before the row is spent, so a Firebase error leaves the approval for the next poll. */
 export async function pollDevice(deviceCode: string): Promise<DevicePoll> {
 	const hash = sha256(deviceCode);
 	const [row] = await db.select().from(deviceCodes).where(eq(deviceCodes.deviceHash, hash));
 	if (!row || row.expiresAt.getTime() <= Date.now()) return { status: 'gone' };
 	if (!row.ownerUid) return { status: 'pending' };
+	let customToken: string;
+	try {
+		customToken = await customTokenFor(row.ownerUid);
+	} catch (error) {
+		if (error instanceof ApiError) throw error;
+		log('device.token_failed', { error: (error as Error).message });
+		throw new ApiError(503, 'sign-in is unavailable; retry shortly');
+	}
 	const spent = await db
 		.delete(deviceCodes)
 		.where(eq(deviceCodes.deviceHash, hash))
 		.returning({ hash: deviceCodes.deviceHash });
-	if (!spent.length) return { status: 'gone' };
-	return { status: 'approved', customToken: await customTokenFor(row.ownerUid) };
+	return spent.length ? { status: 'approved', customToken } : { status: 'gone' };
 }
