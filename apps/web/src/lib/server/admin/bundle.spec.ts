@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { sql } from 'drizzle-orm';
-import { getTableConfig } from 'drizzle-orm/mysql-core';
+import { getTableConfig } from 'drizzle-orm/pg-core';
+import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DATABASE_URL } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
 import { db, pool } from '#lib/server/db/index.ts';
 import { events, images, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
@@ -24,6 +26,7 @@ import {
 	exportBundle,
 	importBundle,
 	isImporting,
+	isRowError,
 	receiveUpload,
 	journalTags,
 	MANIFEST_FILE,
@@ -35,7 +38,7 @@ import { readDirectory, readEntry, writeZip } from './zip.ts';
 const ADMIN = { admin: { via: 'bearer', csrf: '' } };
 const PROJECT = '11111111-1111-4111-8111-111111111111';
 const TASK = '22222222-2222-4222-8222-222222222222';
-const NASTY = `it's "quoted" \\ back\\slash\nnew line\ttab \u{1F680} \u0000 end`;
+const NASTY = `it's "quoted" \\ back\\slash\nnew line\ttab \u{1F680} end`;
 const WRITE_KEY_HASH = createHash('sha256').update('ws_secret').digest('hex');
 
 let dir: string;
@@ -379,7 +382,7 @@ describe('import', () => {
 	it('refuses a table it does not know, leaving the data alone', async () => {
 		await seed();
 		const bad = await repack('evil.zip', {
-			[DB_FILE]: `${JSON.stringify({ table: 'mysql.user', columns: ['id'] })}\n["x"]\n`
+			[DB_FILE]: `${JSON.stringify({ table: 'pg_catalog.pg_user', columns: ['id'] })}\n["x"]\n`
 		});
 
 		await rejected(importBundle(bad, { backupDir: dir }), 422, /unexpected table/);
@@ -653,5 +656,251 @@ describe('hardening', () => {
 
 		const [row] = await db.select().from(projects);
 		expect(row.createdAt.toISOString()).toBe('2026-01-02T03:04:05.678Z');
+	});
+});
+
+describe('import of a MySQL-era bundle', () => {
+	const mysqlBundle = () => {
+		const lines = [
+			{
+				table: 'projects',
+				columns: [
+					'id',
+					'name',
+					'notes',
+					'links',
+					'write_key_hash',
+					'config',
+					'created_at',
+					'last_write_at'
+				]
+			},
+			[
+				PROJECT,
+				'From MySQL',
+				null,
+				null,
+				WRITE_KEY_HASH,
+				'{"theme": "light", "states": [{"key": "q", "kind": "pending"}]}',
+				'2026-01-02 03:04:05.678',
+				'2026-01-02 03:04:06.000'
+			],
+			{
+				table: 'tasks',
+				columns: [
+					'id',
+					'project_id',
+					'title',
+					'summary',
+					'state',
+					'note',
+					'agent',
+					'links',
+					'prs',
+					'repo',
+					'branch',
+					'created_at',
+					'updated_at',
+					'state_since',
+					'finished_at'
+				]
+			},
+			[
+				TASK,
+				PROJECT,
+				'T',
+				'',
+				'q',
+				'',
+				null,
+				null,
+				null,
+				null,
+				null,
+				'2026-01-02 03:04:05.678',
+				'2026-01-02 03:04:05.678',
+				'2026-01-02 03:04:05.678',
+				null
+			],
+			{
+				table: 'nodes',
+				columns: [
+					'task_id',
+					'path',
+					'parent_path',
+					'key',
+					'depth',
+					'title',
+					'state',
+					'note',
+					'tags',
+					'agent',
+					'links',
+					'position',
+					'created_at',
+					'updated_at',
+					'state_since'
+				]
+			},
+			[
+				TASK,
+				'A/b',
+				'A',
+				'b',
+				2,
+				'B',
+				'q',
+				'',
+				'["round 2"]',
+				null,
+				null,
+				0,
+				'2026-01-02 03:04:05.678',
+				'2026-01-02 03:04:05.678',
+				'2026-01-02 03:04:05.678'
+			],
+			{ table: 'notices', columns: ['id', 'task_id', 'path', 'kind', 'text', 'created_at'] },
+			{
+				table: 'events',
+				columns: ['seq', 'project_id', 'task_id', 'path', 'type', 'payload', 'at']
+			},
+			[41, PROJECT, TASK, null, 'task', '{"a": 1}', '2026-01-02 03:04:05.678'],
+			[
+				42,
+				PROJECT,
+				null,
+				null,
+				'config',
+				'{"config": {"theme": "light"}}',
+				'2026-01-02 03:04:05.679'
+			]
+		];
+		return lines.map((line) => JSON.stringify(line)).join('\n') + '\n';
+	};
+
+	it('loads rows, keeps JSON text and UTC instants, and keeps seq above the last event', async () => {
+		const path = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() }, (m) => ({
+			...m,
+			schema: '0006_images'
+		}));
+
+		const result = await importBundle(path, { backupDir: dir });
+
+		expect(result.rows).toMatchObject({ projects: 1, tasks: 1, nodes: 1, events: 2 });
+		const [project] = await db.select().from(projects);
+		expect(project.createdAt.toISOString()).toBe('2026-01-02T03:04:05.678Z');
+		expect(project.config).toEqual({ theme: 'light', states: [{ key: 'q', kind: 'pending' }] });
+		const raw = await db.execute(sql`select config::text as text from projects`);
+		expect(raw.rows[0].text).toBe(
+			'{"theme": "light", "states": [{"key": "q", "kind": "pending"}]}'
+		);
+		const [next] = await db
+			.insert(events)
+			.values({ projectId: PROJECT, type: 'task', payload: {} })
+			.returning({ seq: events.seq });
+		expect(next.seq).toBeGreaterThan(42);
+	});
+
+	it('exports what it imported byte for byte', async () => {
+		const first = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
+		await importBundle(first, { backupDir: dir });
+
+		const { db: text } = await unpack(await exportTo());
+
+		expect(text).toBe(mysqlBundle());
+	});
+
+	const nextSeq = async () => {
+		const [row] = await db
+			.insert(events)
+			.values({ projectId: PROJECT, type: 'task', payload: {} })
+			.returning({ seq: events.seq });
+		return row.seq;
+	};
+	const setSequence = (value: number, called: boolean) =>
+		db.execute(sql`select setval('events_seq_seq', ${value}, ${called})`);
+
+	it('continues seq right after the last imported event', async () => {
+		await setSequence(1, false);
+		const path = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
+
+		await importBundle(path, { backupDir: dir });
+
+		expect(await nextSeq()).toBe(43);
+	});
+
+	it('leaves seq alone when it is already above the last imported event', async () => {
+		await setSequence(5000, true);
+		const path = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
+
+		await importBundle(path, { backupDir: dir });
+
+		expect(await nextSeq()).toBe(5001);
+	});
+
+	it('names the table, row and column of a U+0000 and refuses with a 422', async () => {
+		const path = await repack('nul.zip', {
+			[DB_FILE]: mysqlBundle().replace('"From MySQL"', '"From\\u0000MySQL"')
+		});
+
+		await rejected(
+			importBundle(path, { backupDir: dir }),
+			422,
+			/projects row 1 column name holds U\+0000, which PostgreSQL text cannot store/
+		);
+	});
+
+	it('round trips exactly while the database defaults to another time zone', async () => {
+		const admin = new pg.Client({ connectionString: DATABASE_URL });
+		await admin.connect();
+		const name = (await admin.query('select current_database() as name')).rows[0].name;
+		await admin.query(`alter database "${name}" set timezone to 'America/Los_Angeles'`);
+		try {
+			await admin.query(
+				'select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()',
+				[name]
+			);
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			const zones = await Promise.all(
+				Array.from({ length: 10 }, async () => {
+					const client = await pool.connect();
+					try {
+						return (await client.query('show timezone')).rows[0].TimeZone;
+					} finally {
+						client.release();
+					}
+				})
+			);
+			expect(new Set(zones)).toEqual(new Set(['America/Los_Angeles']));
+			const first = await repack('mysql.zip', { [DB_FILE]: mysqlBundle() });
+			await importBundle(first, { backupDir: dir });
+
+			const { db: text } = await unpack(await exportTo());
+
+			expect(text).toBe(mysqlBundle());
+			const [project] = await db.select().from(projects);
+			expect(project.createdAt.toISOString()).toBe('2026-01-02T03:04:05.678Z');
+		} finally {
+			await admin.query(`alter database "${name}" reset timezone`);
+			await admin.end();
+		}
+	});
+});
+
+describe('isRowError', () => {
+	it.each(['22001', '22P02', '22021', '23502', '23503', '23505'])(
+		'classifies %s as the bundle',
+		(code) => {
+			expect(isRowError(Object.assign(new Error('x'), { code }))).toBe(true);
+		}
+	);
+
+	it.each(['08006', '40001', '53300', '57P01', '42P01'])('leaves %s to the server', (code) => {
+		expect(isRowError(Object.assign(new Error('x'), { code }))).toBe(false);
+	});
+
+	it('ignores errors without a SQLSTATE', () => {
+		expect(isRowError(new Error('x'))).toBe(false);
+		expect(isRowError(null)).toBe(false);
 	});
 });

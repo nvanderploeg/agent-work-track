@@ -1,24 +1,21 @@
-import { sql } from 'drizzle-orm';
 import {
+	bigserial,
 	boolean,
 	char,
 	index,
-	int,
+	integer,
 	json,
-	mysqlTable,
+	pgTable,
 	primaryKey,
-	serial,
 	text,
 	timestamp,
 	varchar
-} from 'drizzle-orm/mysql-core';
+} from 'drizzle-orm/pg-core';
 
-const now = (name: string) =>
-	timestamp(name, { fsp: 3 })
-		.notNull()
-		.default(sql`CURRENT_TIMESTAMP(3)`);
+const instant = (name: string) => timestamp(name, { precision: 3, withTimezone: true });
+const now = (name: string) => instant(name).notNull().defaultNow();
 
-export const projects = mysqlTable('projects', {
+export const projects = pgTable('projects', {
 	id: varchar('id', { length: 36 }).primaryKey(),
 	name: varchar('name', { length: 255 }).notNull(),
 	notes: text('notes'),
@@ -29,7 +26,7 @@ export const projects = mysqlTable('projects', {
 	lastWriteAt: now('last_write_at')
 });
 
-export const tasks = mysqlTable(
+export const tasks = pgTable(
 	'tasks',
 	{
 		id: varchar('id', { length: 36 }).primaryKey(),
@@ -48,14 +45,13 @@ export const tasks = mysqlTable(
 		createdAt: now('created_at'),
 		updatedAt: now('updated_at'),
 		stateSince: now('state_since'),
-		finishedAt: timestamp('finished_at', { fsp: 3 })
+		finishedAt: instant('finished_at')
 	},
 	(table) => [index('tasks_project_created_idx').on(table.projectId, table.createdAt)]
 );
 
-// Path columns are `CHARACTER SET ascii COLLATE ascii_bin` in drizzle/0000_init.sql: drizzle cannot
-// express it, and paths are case-sensitive.
-export const nodes = mysqlTable(
+// Every `path` column is COLLATE "C" in the migration; keep it so.
+export const nodes = pgTable(
 	'nodes',
 	{
 		taskId: varchar('task_id', { length: 36 })
@@ -64,14 +60,14 @@ export const nodes = mysqlTable(
 		path: varchar('path', { length: 512 }).notNull(),
 		parentPath: varchar('parent_path', { length: 512 }),
 		key: varchar('key', { length: 64 }).notNull(),
-		depth: int('depth').notNull(),
+		depth: integer('depth').notNull(),
 		title: text('title').notNull(),
 		state: varchar('state', { length: 32 }).notNull(),
 		note: text('note').notNull(),
 		tags: json('tags').notNull(),
 		agent: json('agent'),
 		links: json('links'),
-		position: int('position').notNull(),
+		position: integer('position').notNull(),
 		createdAt: now('created_at'),
 		updatedAt: now('updated_at'),
 		stateSince: now('state_since')
@@ -79,7 +75,7 @@ export const nodes = mysqlTable(
 	(table) => [primaryKey({ columns: [table.taskId, table.path] })]
 );
 
-export const notices = mysqlTable(
+export const notices = pgTable(
 	'notices',
 	{
 		id: varchar('id', { length: 36 }).primaryKey(),
@@ -94,7 +90,7 @@ export const notices = mysqlTable(
 	(table) => [index('notices_task_created_idx').on(table.taskId, table.createdAt)]
 );
 
-export const images = mysqlTable(
+export const images = pgTable(
 	'images',
 	{
 		id: varchar('id', { length: 36 }).primaryKey(),
@@ -104,17 +100,17 @@ export const images = mysqlTable(
 		path: varchar('path', { length: 512 }),
 		caption: varchar('caption', { length: 300 }).notNull(),
 		review: boolean('review').notNull(),
-		width: int('width').notNull(),
-		height: int('height').notNull(),
+		width: integer('width').notNull(),
+		height: integer('height').notNull(),
 		createdAt: now('created_at')
 	},
 	(table) => [index('images_task_created_idx').on(table.taskId, table.createdAt)]
 );
 
-export const events = mysqlTable(
+export const events = pgTable(
 	'events',
 	{
-		seq: serial('seq').primaryKey(),
+		seq: bigserial('seq', { mode: 'number' }).primaryKey(),
 		projectId: varchar('project_id', { length: 36 })
 			.notNull()
 			.references(() => projects.id, { onDelete: 'cascade' }),

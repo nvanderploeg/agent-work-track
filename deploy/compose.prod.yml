@@ -1,18 +1,16 @@
 services:
   db:
-    image: mysql:8.4
+    image: postgres:17
     restart: unless-stopped
-    # Sized for a small shared host; raise the buffer pool if the database outgrows it.
-    command: ['--performance-schema=OFF', '--innodb-buffer-pool-size=64M']
+    command: ['postgres', '-c', 'shared_buffers=64MB', '-c', 'max_connections=50']
     environment:
-      MYSQL_DATABASE: chronicle
-      MYSQL_USER: chronicle
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in deploy/chronicle.env}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in deploy/chronicle.env}
+      POSTGRES_DB: chronicle
+      POSTGRES_USER: chronicle
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/chronicle.env}
     volumes:
-      - mysqldata:/var/lib/mysql
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      test: ['CMD-SHELL', 'pg_isready -U chronicle -d chronicle']
       interval: 5s
       timeout: 5s
       retries: 30
@@ -24,7 +22,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: mysql://chronicle:${MYSQL_PASSWORD}@db:3306/chronicle
+      DATABASE_URL: postgres://chronicle:${POSTGRES_PASSWORD}@db:5432/chronicle
       ORIGIN: ${ORIGIN:?set ORIGIN in deploy/chronicle.env}
       CHRONICLE_IDLE_MS: ${CHRONICLE_IDLE_MS:-}
       CHRONICLE_HEARTBEAT_MS: ${CHRONICLE_HEARTBEAT_MS:-}
@@ -43,5 +41,5 @@ services:
       - '127.0.0.1:3280:3000'
 
 volumes:
-  mysqldata:
+  pgdata:
   backups:

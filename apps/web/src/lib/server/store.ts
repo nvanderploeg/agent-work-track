@@ -221,11 +221,12 @@ async function mutate<T>(projectId: string, work: (ctx: Ctx) => Promise<T>): Pro
 				config: project.config as ProjectConfig,
 				now,
 				async emit(type, taskId, path, payload) {
-					const [result] = await tx
+					const [{ seq }] = await tx
 						.insert(events)
-						.values({ projectId, taskId, path, type, payload, at: now });
+						.values({ projectId, taskId, path, type, payload, at: now })
+						.returning({ seq: events.seq });
 					stored.push({
-						seq: Number(result.insertId),
+						seq,
 						type,
 						taskId,
 						path,

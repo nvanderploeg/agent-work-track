@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { getTableConfig, type MySqlTable } from 'drizzle-orm/mysql-core';
-import type { PoolConnection } from 'mysql2/promise';
+import { getTableConfig, type PgColumn, type PgTable } from 'drizzle-orm/pg-core';
+import pg from 'pg';
+import Cursor from 'pg-cursor';
 import { ADMIN_BACKUP_DIR, ADMIN_MAX_UNPACKED_MB } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
 import { pool } from '#lib/server/db/index.ts';
@@ -35,26 +36,26 @@ const MAX_LINE_BYTES = 40 << 20;
 const MAX_MANIFEST_BYTES = 1 << 20;
 const BATCH_ROWS = 500;
 const DRAIN_MS = 30_000;
-// Integrity and range errors a bundle's own rows can cause; anything else is the server's fault.
-const ROW_ERRORS = new Set([
-	'ER_NO_REFERENCED_ROW_2',
-	'ER_ROW_IS_REFERENCED_2',
-	'ER_DATA_TOO_LONG',
-	'ER_DUP_ENTRY',
-	'ER_BAD_NULL_ERROR',
-	'ER_NO_DEFAULT_FOR_FIELD',
-	'ER_TRUNCATED_WRONG_VALUE',
-	'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD',
-	'ER_WARN_DATA_OUT_OF_RANGE',
-	'ER_INVALID_JSON_TEXT',
-	'ER_INVALID_JSON_TEXT_IN_PARAM',
-	'ER_CANT_CREATE_GEOMETRY_OBJECT',
-	'WARN_DATA_TRUNCATED'
-]);
+const CURSOR_ROWS = 256;
+const LEGACY_SCHEMAS = [
+	'0000_init',
+	'0001_events_task_index',
+	'0002_agent_links_notes',
+	'0003_review_state',
+	'0004_task_prs',
+	'0005_notices',
+	'0006_images'
+];
+
+// Only SQLSTATE classes 22 (data exception) and 23 (integrity violation) blame the Bundle.
+export function isRowError(error: unknown): error is Error & { code: string } {
+	const code = (error as { code?: unknown } | null)?.code;
+	return typeof code === 'string' && /^2[23]/.test(code);
+}
 
 // Parents before children. Images are deliberately absent: their bytes live in server memory only,
 // so an imported Task has none and the images table is emptied.
-export const BUNDLE_TABLES: Record<string, MySqlTable> = {
+export const BUNDLE_TABLES: Record<string, PgTable> = {
 	projects,
 	tasks,
 	nodes,
@@ -85,66 +86,59 @@ export async function journalTags(): Promise<string[]> {
 	return (await readJournal()).map((entry) => entry.tag);
 }
 
-function columnsOf(table: MySqlTable) {
+function columnsOf(table: PgTable) {
 	return getTableConfig(table).columns;
 }
 
-// Raw text for timestamps and JSON keeps a round trip byte-exact.
-const typeCast = (
-	field: { type: string; string: (encoding: string) => string | null },
-	next: () => unknown
-): unknown =>
-	field.type === 'TIMESTAMP' || field.type === 'DATETIME' || field.type === 'JSON'
-		? field.string('utf8')
-		: next();
+const INTEGER_OIDS = new Set([20, 21, 23]);
 
-// The promise wrapper hides row streaming; the callback connection underneath has it.
-function callbackConnection(conn: PoolConnection) {
-	return (
-		conn as unknown as {
-			connection: {
-				query: (options: object) => { stream: (options: object) => AsyncIterable<unknown> };
-			};
-		}
-	).connection;
+const rawTypes = {
+	getTypeParser: (oid: number) => (INTEGER_OIDS.has(oid) ? Number : (text: string) => text)
+};
+
+function selectExpression(column: PgColumn): string {
+	const name = `"${column.name}"`;
+	return column.columnType === 'PgTimestamp'
+		? `to_char(${name} AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.MS')`
+		: name;
 }
 
-async function* dumpDatabase(conn: PoolConnection): AsyncGenerator<Buffer> {
+async function* dumpDatabase(conn: pg.PoolClient): AsyncGenerator<Buffer> {
 	for (const [name, table] of Object.entries(BUNDLE_TABLES)) {
-		const names = columnsOf(table).map((column) => column.name);
+		const columns = columnsOf(table);
+		const names = columns.map((column) => column.name);
 		yield Buffer.from(`${JSON.stringify({ table: name, columns: names })}\n`);
-		const rows = callbackConnection(conn)
-			.query({
-				sql: `SELECT ${names.map((n) => `\`${n}\``).join(', ')} FROM \`${name}\``,
-				typeCast
+		const cursor = conn.query(
+			new Cursor(`SELECT ${columns.map(selectExpression).join(', ')} FROM "${name}"`, [], {
+				rowMode: 'array',
+				types: rawTypes
 			})
-			.stream({ highWaterMark: 256 });
+		);
 		let pending = '';
-		try {
-			for await (const row of rows as AsyncIterable<Record<string, unknown>>) {
-				pending += `${JSON.stringify(names.map((n) => row[n]))}\n`;
-				if (pending.length > 1 << 16) {
-					yield Buffer.from(pending);
-					pending = '';
-				}
+		for (;;) {
+			const batch = await cursor.read(CURSOR_ROWS);
+			if (!batch.length) break;
+			for (const row of batch) pending += `${JSON.stringify(row)}\n`;
+			if (pending.length > 1 << 16) {
+				yield Buffer.from(pending);
+				pending = '';
 			}
-		} finally {
-			(rows as unknown as { destroy(): void }).destroy();
 		}
+		await cursor.close();
 		if (pending) yield Buffer.from(pending);
 	}
 }
 
-// One REPEATABLE READ snapshot spans every table, so the dump is a single point in time.
-// A streamed Bundle lists its files last: sizes and hashes are known only once they are sent.
+// Read every table inside the one snapshot the first query fixes.
+// Write the manifest last: sizes and hashes exist only once the files are sent.
 export async function* exportBundle(): AsyncGenerator<Buffer> {
 	const tags = await journalTags();
-	const conn = await pool.getConnection();
+	const conn = await pool.connect();
 	let complete = false;
 	try {
-		await conn.query("SET time_zone = '+00:00'");
-		await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-		await conn.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+		await conn.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+		await conn.query('SET LOCAL statement_timeout = 0');
+		await conn.query('SELECT pg_current_snapshot()');
 		const hash = createHash('sha256');
 		let size = 0;
 		async function* entries(): AsyncGenerator<ZipSource> {
@@ -180,8 +174,7 @@ export async function* exportBundle(): AsyncGenerator<Buffer> {
 			await conn.query('ROLLBACK').catch(() => {});
 			conn.release();
 		} else {
-			// An abandoned dump may leave its SELECT unfinished; the pool must not get this connection back.
-			conn.destroy();
+			conn.release(true);
 		}
 	}
 }
@@ -204,11 +197,11 @@ const ZIP_LIMIT_BYTES = 3.5 * 1024 ** 3;
 
 /** Refuses up front an export whose tables alone would pass the 4 GiB a streamed zip can address. */
 export async function assertExportable(): Promise<void> {
-	const [rows] = (await pool.query(
-		`SELECT COALESCE(SUM(data_length), 0) AS bytes FROM information_schema.tables
-		 WHERE table_schema = DATABASE() AND table_name IN (?)`,
+	const { rows } = await pool.query<{ bytes: string }>(
+		`SELECT COALESCE(SUM(pg_table_size(to_regclass(quote_ident(t)))), 0) AS bytes
+		 FROM unnest($1::text[]) AS t`,
 		[Object.keys(BUNDLE_TABLES)]
-	)) as [{ bytes: string | number }[], unknown];
+	);
 	if (Number(rows[0].bytes) > ZIP_LIMIT_BYTES) {
 		throw new ApiError(413, 'the database is too large for a single-zip bundle (4 GiB limit)');
 	}
@@ -271,8 +264,7 @@ export async function verifyBundle(
 	}
 
 	const tags = await journalTags();
-	const level = tags.indexOf(manifest.schema);
-	if (level < 0) {
+	if (!tags.includes(manifest.schema) && !LEGACY_SCHEMAS.includes(manifest.schema)) {
 		refuse(
 			`bundle rejected: schema ${JSON.stringify(manifest.schema)} is newer than this build (latest ${tags[tags.length - 1]})`,
 			409
@@ -429,6 +421,32 @@ async function scanDatabase(path: string, entry: ZipEntry, allowEmpty: boolean):
 	}
 }
 
+function assertNoNul(
+	table: { name: string; columns: string[]; pending: unknown[][] },
+	done: number
+) {
+	table.pending.forEach((row, r) =>
+		row.forEach((value, c) => {
+			if (typeof value === 'string' && value.includes('\0')) {
+				refuse(
+					`bundle rejected: ${table.name} row ${done + r + 1} column ${table.columns[c]} holds U+0000, which PostgreSQL text cannot store`
+				);
+			}
+		})
+	);
+}
+
+// Never let the events sequence fall behind imported rows or move backwards.
+async function advanceEventSequence(conn: pg.PoolClient): Promise<void> {
+	await conn.query(
+		`SELECT setval(s.name, m.top)
+		 FROM (SELECT pg_get_serial_sequence('events', 'seq') AS name) s,
+			(SELECT MAX(seq) AS top FROM events) m
+		 WHERE m.top > (SELECT COALESCE(MAX(last_value), 0) FROM pg_sequences
+			WHERE schemaname || '.' || sequencename = s.name)`
+	);
+}
+
 export interface ImportResult {
 	schema: string;
 	appVersion: string;
@@ -459,28 +477,32 @@ export async function importBundle(
 		}
 		const backup = await writeBackup(options.backupDir ?? (await backupDir()));
 
-		const conn = await pool.getConnection();
+		const conn = await pool.connect();
 		const rows: Record<string, number> = {};
 		let imagesDropped = 0;
 		try {
-			await conn.query("SET time_zone = '+00:00'");
-			await conn.query('START TRANSACTION');
-			const [counted] = (await conn.query('SELECT COUNT(*) AS n FROM `images`')) as [
-				{ n: number }[],
-				unknown
-			];
-			imagesDropped = Number(counted[0].n);
-			for (const name of WIPE_ORDER) await conn.query(`DELETE FROM \`${name}\``);
+			await conn.query('BEGIN');
+			await conn.query("SET LOCAL TIME ZONE 'UTC'");
+			await conn.query('SET LOCAL statement_timeout = 0');
+			const counted = await conn.query<{ n: string }>('SELECT COUNT(*) AS n FROM "images"');
+			imagesDropped = Number(counted.rows[0].n);
+			for (const name of WIPE_ORDER) await conn.query(`DELETE FROM "${name}"`);
 
 			let table: ReturnType<typeof openTable> | undefined;
 			const flush = async () => {
 				if (!table?.pending.length) return;
-				await conn.query(`INSERT INTO \`${table.name}\` (??) VALUES ?`, [
-					table.columns,
-					table.pending
-				]);
-				rows[table.name] += table.pending.length;
-				table.pending = [];
+				const open = table;
+				assertNoNul(open, rows[open.name]);
+				const width = open.columns.length;
+				const placeholders = open.pending
+					.map((_, r) => `(${open.columns.map((_, c) => `$${r * width + c + 1}`).join(', ')})`)
+					.join(', ');
+				await conn.query(
+					`INSERT INTO "${open.name}" (${open.columns.map((c) => `"${c}"`).join(', ')}) VALUES ${placeholders}`,
+					open.pending.flat()
+				);
+				rows[open.name] += open.pending.length;
+				open.pending = [];
 			};
 			for await (const line of lines(readEntry(path, dbEntry))) {
 				if (line === '') continue;
@@ -497,17 +519,14 @@ export async function importBundle(
 				if (table.pending.length >= BATCH_ROWS) await flush();
 			}
 			await flush();
+			await advanceEventSequence(conn);
 			await conn.query('COMMIT');
 		} catch (error) {
 			await conn.query('ROLLBACK').catch(() => {});
-			// Rolled back, so the database is as it was and the backup says nothing new.
 			await rm(backup, { force: true });
 			if (error instanceof SyntaxError) refuse('bundle rejected: db.ndjson is not valid');
 			if (error instanceof ZipError) refuse(`bundle rejected: ${error.message}`);
-			const code = (error as { code?: string }).code;
-			if (code && ROW_ERRORS.has(code)) {
-				refuse(`bundle rejected: ${(error as { sqlMessage?: string }).sqlMessage ?? code}`);
-			}
+			if (isRowError(error)) refuse(`bundle rejected: ${error.message}`);
 			throw error;
 		} finally {
 			conn.release();

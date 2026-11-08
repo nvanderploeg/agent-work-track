@@ -27,7 +27,7 @@ local tracker on <http://localhost:3280> and waits for it to be healthy. It is s
 
 | Flag            | Effect                                                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `--with-server` | Run `docker compose up -d` (MySQL and the app) and wait for `http://localhost:3280/api/health`.                         |
+| `--with-server` | Run `docker compose up -d` (PostgreSQL and the app) and wait for `http://localhost:3280/api/health`.                         |
 | `--replace`     | Move conflicting paths aside to `<name>.bak-<timestamp>` and re-register the MCP server, instead of skipping them.      |
 | `--allow-tools` | Add `mcp__chronicle__*` to `permissions.allow` in `~/.claude/settings.json`, so Claude Code stops asking for each tool. |
 | `--hooks`       | Add Claude Code hooks to `~/.claude/settings.json` that keep a session's chronicle task current once chronicle is in use (see below). |
@@ -232,15 +232,15 @@ export CHRONICLE_URL=http://localhost:5180   # always use this server
 ## Run the server
 
 **Compose (local tracker).** `docker compose up -d` (or `scripts/install.sh --with-server`) starts
-MySQL 8.4 and the app on <http://localhost:3280>; the app applies its migrations at boot.
-`pnpm db:start` starts only the database, on `127.0.0.1:3316`.
+PostgreSQL 17 and the app on <http://localhost:3280>; the app applies its migrations at boot.
+`pnpm db:start` starts only the database, on `127.0.0.1:5436`.
 
 **Dev mode.** With the database up:
 
 ```sh
 pnpm install
 pnpm db:start
-pnpm --filter web dev --port 5180      # defaults DATABASE_URL to chronicle_dev on :3316
+pnpm --filter web dev --port 5180      # defaults DATABASE_URL to chronicle_dev on :5436
 ```
 
 **Built app.** The migrations folder is resolved from the working directory, so run it from
@@ -249,13 +249,13 @@ pnpm --filter web dev --port 5180      # defaults DATABASE_URL to chronicle_dev 
 ```sh
 pnpm --filter web build
 cd apps/web
-DATABASE_URL=mysql://chronicle:chronicle@127.0.0.1:3316/chronicle_dev \
+DATABASE_URL=postgres://chronicle:chronicle@127.0.0.1:5436/chronicle_dev \
 ORIGIN=http://localhost:3000 PORT=3000 node build
 ```
 
 | Variable                      | Meaning                                                                                                                                                                             |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                | MySQL connection string. Required outside dev and test mode.                                                                                                                        |
+| `DATABASE_URL`                | PostgreSQL connection string (`postgres://user:password@host:5432/database`). Required outside dev and test mode.                                                                                                                        |
 | `ORIGIN`                      | Public origin the app is served at. The node adapter builds request URLs from it, so the `url` fields the API returns start with it.                                                |
 | `PORT`                        | Port the built app listens on (default 3000).                                                                                                                                       |
 | `CHRONICLE_IDLE_MS`           | Quiet time after the last write before a stream sends `idle` and closes. Default 14 400 000 (4 h).                                                                                  |
@@ -268,10 +268,21 @@ ORIGIN=http://localhost:3000 PORT=3000 node build
 | `ADMIN_MAX_UNPACKED_MB` | Largest total unpacked size of a Bundle. Default 2048. |
 | `ADDRESS_HEADER`              | Header the client address is read from behind a proxy (`x-real-ip` with the bundled nginx). Unset: the socket address.                                                              |
 
+**External PostgreSQL.** Over a network you do not trust, use TLS and full verification:
+`DATABASE_URL=postgres://user:pw@host:5432/chronicle?sslmode=verify-full`. The `pg` driver treats
+`sslmode=require`, `prefer` and `verify-ca` as `verify-full` (certificate chain and hostname) and
+warns; `sslmode=no-verify` turns verification off. Add `uselibpqcompat=true` for libpq semantics
+instead (`require` then encrypts without verifying). A private CA goes in `sslrootcert=/path/ca.pem`.
+The password must be URL-safe (hex, `openssl rand -hex 24`) because it is spliced into the URL.
+
+**One replica.** Run exactly one app instance. The Bundle import freeze, `ADMIN_BACKUP_DIR` and the
+SSE stream bus live in the process, so a second replica would miss events and could write during an
+import. Migrations at boot are safe to race (advisory lock), but that is for rolling restarts only.
+
 The local `compose.yaml` passes only `DATABASE_URL`, `ORIGIN` and `ADMIN_TOKEN` to the app; set the other
 `CHRONICLE_*` variables when running the built app directly or through `deploy/compose.prod.yml`.
-Compose reads `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `MYSQL_PASSWORD`,
-`MYSQL_ROOT_PASSWORD` and `MYSQL_PORT` from the environment.
+Compose reads `CHRONICLE_PORT` (host port, default 3280), `CHRONICLE_ORIGIN`, `POSTGRES_PASSWORD`
+and `POSTGRES_PORT` from the environment.
 
 ## Simulate and captures
 
@@ -383,17 +394,18 @@ file's size and hash only after sending it):
 	"format": 1,
 	"service": "chronicle",
 	"appVersion": "0.1.0",
-	"schema": "0006_images",
+	"schema": "0000_baseline",
 	"createdAt": "2026-11-06T17:00:00.000Z",
 	"files": [{ "path": "db.ndjson", "size": 123, "sha256": "…" }]
 }
 ```
 
-`schema` is the latest drizzle migration tag the exporting build knew. Chronicle runs on MySQL, so
+`schema` is the latest drizzle migration tag the exporting build knew. Chronicle runs on PostgreSQL, so
 there is no database file to copy: the export opens one `REPEATABLE READ` transaction
-`WITH CONSISTENT SNAPSHOT` and streams every table through it, a single point in time while writes
+and streams every table through it, a single point in time while writes
 continue. Each table is a header line `{"table","columns"}` followed by one JSON array per row;
-timestamps and JSON columns travel as the exact text MySQL holds.
+JSON columns travel as the exact text the database holds and timestamps as UTC `YYYY-MM-DD HH:MM:SS.mmm`.
+A Bundle exported by the MySQL build (schema `0000_init` to `0006_images`) imports as is.
 
 Carried: Projects (with each Write key's sha256), Tasks, Nodes, Notices and Events (so `seq` and a
 stream's replay stay meaningful). **Chronicle Images are not carried**: their bytes live in server
@@ -413,9 +425,9 @@ memory and expire, so an imported Task has none and the images table is emptied.
 5. Scan `db.ndjson` once more: every table header present exactly once, rows the width of their
    header, and at least one Project unless `allow-empty=1`, so a rehashed empty file cannot wipe the
    server.
-6. In one MySQL transaction: delete every row, insert the Bundle's rows, commit. Any failure rolls
-   back and the database is as it was; a row the schema refuses (bad reference, oversized value) is a 422 naming MySQL's complaint, and the backup is removed. Steps after the commit (ending streams, dropping cached
-   images) cannot fail the import; a failure there is returned as `warnings` in a 200. Timestamps travel as UTC text: export and import both pin their session to `+00:00`.
+6. In one PostgreSQL transaction: delete every row, insert the Bundle's rows, commit. Any failure rolls
+   back and the database is as it was; a row the schema refuses (bad reference, oversized value) is a 422 naming PostgreSQL's complaint, and the backup is removed. Steps after the commit (ending streams, dropping cached
+   images) cannot fail the import; a failure there is returned as `warnings` in a 200. Timestamps travel as UTC text: every session runs with `timezone=UTC`.
 
 The response is `{schema, appVersion, backup, rows, imagesDropped, warnings}`. **Images:** the
 images table is wiped and not part of the backup either, so `imagesDropped` counts the records
@@ -440,7 +452,7 @@ auto-update timer.
 ## Development
 
 ```
-apps/web/        SvelteKit app: dashboard pages, HTTP API, SSE stream, MySQL via drizzle
+apps/web/        SvelteKit app: dashboard pages, HTTP API, SSE stream, PostgreSQL via drizzle
 packages/client/ discovery, registry files and HTTP calls (@chronicle/client)
 packages/cli/    the chronicle command
 packages/mcp/    the chronicle-mcp stdio server
@@ -460,5 +472,5 @@ pnpm test       # builds the packages, then runs every workspace's tests
 ```
 
 `pnpm test` uses the compose database (`pnpm db:start`): the web tests run against
-`chronicle_test` on `127.0.0.1:3316`. The contracts in `docs/` win over the code until they are
+`chronicle_test` on `127.0.0.1:5436`. The contracts in `docs/` win over the code until they are
 edited; [`CONTEXT.md`](../CONTEXT.md) holds the vocabulary.

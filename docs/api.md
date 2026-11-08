@@ -230,7 +230,7 @@ minutes (429 with `Retry-After`). Endpoints and the Bundle format are in
 
 ## Presets
 
-`build-it` (default): `theme: 'system'`, `initialState: 'queued'`. Migration `0003_review_state` adds `review` after `testing` to projects created before it existed, when their fourth state is still `testing`.
+`build-it` (default): `theme: 'system'`, `initialState: 'queued'`.
 
 | key         | label       | color     | kind    | icon | animation |
 | ----------- | ----------- | --------- | ------- | ---- | --------- |
