@@ -14,7 +14,10 @@ export async function bootstrap(pool: pg.Pool = appPool): Promise<void> {
 	const lock = await pool.connect();
 	try {
 		await lock.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK]);
-		await migrate(drizzle(pool), { migrationsFolder: resolve('drizzle') });
+		await migrate(drizzle(pool), {
+			migrationsFolder: resolve('drizzle'),
+			migrationsTable: 'chronicle_migrations'
+		});
 	} finally {
 		await lock.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK]).catch(() => {});
 		lock.release();

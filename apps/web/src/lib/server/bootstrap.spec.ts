@@ -29,7 +29,7 @@ describe('bootstrap', () => {
 
 		expect(results.map((r) => r.status)).toEqual(Array(4).fill('fulfilled'));
 		const applied = await fresh.query(
-			'select count(*)::int as n from drizzle.__drizzle_migrations'
+			'select count(*)::int as n from drizzle.chronicle_migrations'
 		);
 		expect(applied.rows[0].n).toBe(1);
 	});

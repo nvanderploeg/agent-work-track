@@ -15,7 +15,9 @@ import {
 const instant = (name: string) => timestamp(name, { precision: 3, withTimezone: true });
 const now = (name: string) => instant(name).notNull().defaultNow();
 
-export const projects = pgTable('projects', {
+export const TABLE_PREFIX = 'chronicle_';
+
+export const projects = pgTable('chronicle_projects', {
 	id: varchar('id', { length: 36 }).primaryKey(),
 	name: varchar('name', { length: 255 }).notNull(),
 	notes: text('notes'),
@@ -27,7 +29,7 @@ export const projects = pgTable('projects', {
 });
 
 export const tasks = pgTable(
-	'tasks',
+	'chronicle_tasks',
 	{
 		id: varchar('id', { length: 36 }).primaryKey(),
 		projectId: varchar('project_id', { length: 36 })
@@ -47,12 +49,12 @@ export const tasks = pgTable(
 		stateSince: now('state_since'),
 		finishedAt: instant('finished_at')
 	},
-	(table) => [index('tasks_project_created_idx').on(table.projectId, table.createdAt)]
+	(table) => [index('chronicle_tasks_project_created_idx').on(table.projectId, table.createdAt)]
 );
 
 // Every `path` column is COLLATE "C" in the migration; keep it so.
 export const nodes = pgTable(
-	'nodes',
+	'chronicle_nodes',
 	{
 		taskId: varchar('task_id', { length: 36 })
 			.notNull()
@@ -76,7 +78,7 @@ export const nodes = pgTable(
 );
 
 export const notices = pgTable(
-	'notices',
+	'chronicle_notices',
 	{
 		id: varchar('id', { length: 36 }).primaryKey(),
 		taskId: varchar('task_id', { length: 36 })
@@ -87,11 +89,11 @@ export const notices = pgTable(
 		text: text('text').notNull(),
 		createdAt: now('created_at')
 	},
-	(table) => [index('notices_task_created_idx').on(table.taskId, table.createdAt)]
+	(table) => [index('chronicle_notices_task_created_idx').on(table.taskId, table.createdAt)]
 );
 
 export const images = pgTable(
-	'images',
+	'chronicle_images',
 	{
 		id: varchar('id', { length: 36 }).primaryKey(),
 		taskId: varchar('task_id', { length: 36 })
@@ -104,11 +106,11 @@ export const images = pgTable(
 		height: integer('height').notNull(),
 		createdAt: now('created_at')
 	},
-	(table) => [index('images_task_created_idx').on(table.taskId, table.createdAt)]
+	(table) => [index('chronicle_images_task_created_idx').on(table.taskId, table.createdAt)]
 );
 
 export const events = pgTable(
-	'events',
+	'chronicle_events',
 	{
 		seq: bigserial('seq', { mode: 'number' }).primaryKey(),
 		projectId: varchar('project_id', { length: 36 })
@@ -121,7 +123,7 @@ export const events = pgTable(
 		at: now('at')
 	},
 	(table) => [
-		index('events_project_seq_idx').on(table.projectId, table.seq),
-		index('events_task_path_seq_idx').on(table.taskId, table.path, table.seq)
+		index('chronicle_events_project_seq_idx').on(table.projectId, table.seq),
+		index('chronicle_events_task_path_seq_idx').on(table.taskId, table.path, table.seq)
 	]
 );

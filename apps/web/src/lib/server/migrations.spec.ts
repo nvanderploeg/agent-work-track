@@ -10,7 +10,7 @@ async function rows<T extends object>(query: ReturnType<typeof sql>): Promise<T[
 describe('baseline migration', () => {
 	it('is the only migration, applied once', async () => {
 		expect(await journalTags()).toEqual(['0000_baseline']);
-		const applied = await rows(sql`select 1 from drizzle.__drizzle_migrations`);
+		const applied = await rows(sql`select 1 from drizzle.chronicle_migrations`);
 		expect(applied).toHaveLength(1);
 	});
 
@@ -26,7 +26,7 @@ describe('baseline migration', () => {
 	it('stores timestamps with millisecond precision and a zone', async () => {
 		const found = await rows<{ data_type: string; datetime_precision: number }>(
 			sql`select data_type, datetime_precision from information_schema.columns
-				where table_schema = current_schema() and table_name = 'projects' and column_name = 'created_at'`
+				where table_schema = current_schema() and table_name = 'chronicle_projects' and column_name = 'created_at'`
 		);
 		expect(found).toEqual([{ data_type: 'timestamp with time zone', datetime_precision: 3 }]);
 	});
