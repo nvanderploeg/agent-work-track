@@ -14,6 +14,8 @@
 	let importPhrase = $state('');
 	let pending = $state<{ id: string; label: string; phrase: string } | null>(null);
 	let typed = $state('');
+	let assigning = $state<{ id: string; label: string } | null>(null);
+	let ownerInput = $state('');
 
 	$effect(() => {
 		if (data.authed) csrf = data.csrf;
@@ -76,6 +78,22 @@
 		if (response.ok) {
 			pending = null;
 			typed = '';
+			await invalidateAll();
+		}
+	}
+
+	async function assign() {
+		if (!assigning) return;
+		const value = ownerInput.trim();
+		const response = await call(`/api/admin/projects/${assigning.id}`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(value.includes('@') ? { email: value } : { uid: value })
+		});
+		await say(response, `${assigning.label} now has an Owner.`);
+		if (response.ok) {
+			assigning = null;
+			ownerInput = '';
 			await invalidateAll();
 		}
 	}
@@ -192,7 +210,20 @@
 						<span class="text-sm text-(--muted)">
 							{project.tasks} tasks · {size(project.bytes)} · active {when(project.lastActivityAt)}
 						</span>
+						<div class="text-sm text-(--muted)" data-testid="owner">
+							Owner: {project.owner
+								? (project.owner.email ?? project.owner.uid)
+								: 'none (anonymous)'}
+						</div>
 					</div>
+					<button
+						class="text-sm text-(--accent)"
+						data-testid="assign"
+						onclick={() => {
+							assigning = { id: project.id, label: `Project ${project.name}` };
+							ownerInput = '';
+						}}>{project.owner ? 'Reassign owner' : 'Assign owner'}</button
+					>
 					<button
 						class="text-sm text-(--removed)"
 						data-testid="delete"
@@ -210,6 +241,36 @@
 				<p class="text-(--muted)">No Projects.</p>
 			{/each}
 		</section>
+
+		{#if assigning}
+			<form
+				onsubmit={(event) => {
+					event.preventDefault();
+					void assign();
+				}}
+				class="space-y-2 rounded border border-(--line) p-3"
+			>
+				<label class="block">
+					<span class="text-sm text-(--muted)">
+						Owner of <strong>{assigning.label}</strong>: an email (the user must have signed in) or
+						a uid. The Write key keeps working and visibility is unchanged.
+					</span>
+					<input
+						bind:value={ownerInput}
+						data-testid="owner-input"
+						class="mt-1 w-full rounded border border-(--line) bg-(--surface) p-2"
+					/>
+				</label>
+				<button
+					disabled={busy || !ownerInput.trim()}
+					data-testid="assign-submit"
+					class="rounded bg-(--accent) px-4 py-2 text-white disabled:opacity-50"
+				>
+					Assign owner
+				</button>
+				<button type="button" class="px-3 py-2" onclick={() => (assigning = null)}>Cancel</button>
+			</form>
+		{/if}
 
 		{#if pending}
 			<form

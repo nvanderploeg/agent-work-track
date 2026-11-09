@@ -376,3 +376,29 @@ export function parseProjectCreate(body: Body): {
 	}
 	return { ...fields, config: structuredClone(preset ?? PRESETS['build-it']) };
 }
+
+const MAX_UID = 128;
+const MAX_EMAIL = 320;
+// eslint-disable-next-line no-control-regex
+const UID_SHAPE = /^[^\s\u0000-\u001f\u007f]+$/;
+
+export type OwnerTarget = { uid: string } | { email: string };
+
+/** Exactly one of `uid` or `email`. An email is lowercased for lookup. */
+export function parseOwnerTarget(body: Body): OwnerTarget {
+	const { uid, email } = body;
+	if ((uid === undefined) === (email === undefined)) {
+		throw new ApiError(400, 'send exactly one of uid or email');
+	}
+	if (uid !== undefined) {
+		if (typeof uid !== 'string' || uid.length > MAX_UID || !UID_SHAPE.test(uid)) {
+			throw new ApiError(400, `uid must be 1 to ${MAX_UID} characters with no whitespace`);
+		}
+		return { uid };
+	}
+	const trimmed = typeof email === 'string' ? email.trim().toLowerCase() : '';
+	if (!trimmed || trimmed.length > MAX_EMAIL || !/^[^\s@]+@[^\s@]+$/.test(trimmed)) {
+		throw new ApiError(400, 'email must be an email address');
+	}
+	return { email: trimmed };
+}

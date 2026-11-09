@@ -47,6 +47,9 @@ const { GET: getAuthConfig } = await import('../../routes/api/auth/config/+serve
 const { GET: listMine, POST: createMine } = await import('../../routes/api/me/projects/+server.ts');
 const { PATCH: patchMine } = await import('../../routes/api/me/projects/[id]/+server.ts');
 const { PATCH: patchMyTask } = await import('../../routes/api/me/tasks/[taskId]/+server.ts');
+const { DELETE: clearKey, POST: rotateKey } =
+	await import('../../routes/api/me/projects/[id]/write-key/+server.ts');
+const { assignOwner } = await import('./admin/portal.ts');
 const { load: loadProjectPage } = await import('../../routes/p/[id]/+page.server.ts');
 const { load: loadTaskPage } = await import('../../routes/p/[id]/t/[taskId]/+page.server.ts');
 
@@ -473,5 +476,84 @@ describe('session endpoints', () => {
 		expect(body.user.uid).toBe('alice');
 		expect(anonymous.user).toBeNull();
 		expect(config).toEqual({ apiKey: 'k', authDomain: 'd', projectId: 'p' });
+	});
+});
+
+describe('an anonymous Project that gains an Owner', () => {
+	async function anonymous() {
+		const created = await json(
+			await postProject(ev({ method: 'POST', path: '/api/projects', body: { name: 'anon' } }))
+		);
+		return { id: created.id as string, key: created.writeKey as string };
+	}
+	const write = async (id: string, bearer: string) =>
+		(
+			await postTask(
+				ev({
+					method: 'POST',
+					path: `/api/projects/${id}/tasks`,
+					key: bearer,
+					params: { id },
+					body: { title: 'T' }
+				})
+			)
+		).status;
+	const keyRoute = (call: typeof rotateKey, id: string, as: string) =>
+		call(ev({ method: 'POST', path: `/api/me/projects/${id}/write-key`, as, params: { id } }));
+
+	it('keeps its visibility and its Write key, and takes the Owner token too', async () => {
+		const { id, key } = await anonymous();
+		await assignOwner(id, { uid: 'alice' });
+
+		expect((await json(await read(id))).project).toMatchObject({ owned: true, public: true });
+		expect(await write(id, key)).toBe(201);
+		expect(await write(id, 'eyJ.alice.sig')).toBe(201);
+		expect(await write(id, 'eyJ.bob.sig')).toBe(403);
+	});
+
+	it('lets only the Owner rotate the key, which retires the old one', async () => {
+		const { id, key } = await anonymous();
+		await assignOwner(id, { uid: 'alice' });
+
+		expect((await keyRoute(rotateKey, id, 'bob')).status).toBe(404);
+		const rotated = await json(await keyRoute(rotateKey, id, 'alice'));
+
+		expect(rotated.writeKey).toMatch(/^ws_/);
+		expect(await write(id, key)).toBe(401);
+		expect(await write(id, rotated.writeKey)).toBe(201);
+	});
+
+	it('lets the Owner clear the key, leaving only Owner tokens to write', async () => {
+		const { id, key } = await anonymous();
+		await assignOwner(id, { uid: 'alice' });
+
+		expect((await keyRoute(clearKey, id, 'alice')).status).toBe(200);
+
+		expect(await write(id, key)).toBe(401);
+		expect(await write(id, 'eyJ.alice.sig')).toBe(201);
+	});
+
+	it('moves a private Project to the new Owner and out of the old Owner reach', async () => {
+		const project = await ownedProject('alice');
+		await assignOwner(project.id, { uid: 'bob' });
+
+		expect((await read(project.id, 'alice')).status).toBe(404);
+		expect((await read(project.id, 'bob')).status).toBe(200);
+		expect(await write(project.id, project.token)).toBe(403);
+		expect(await write(project.id, 'eyJ.bob.sig')).toBe(201);
+	});
+
+	it('resolves an email through the users who have signed in', async () => {
+		const { id } = await anonymous();
+		await db.insert(users).values({ uid: 'carol', email: 'Carol@Example.com' });
+
+		await expect(assignOwner(id, { email: 'dave@example.com' })).rejects.toMatchObject({
+			status: 404,
+			message: expect.stringContaining('sign in')
+		});
+		expect(await assignOwner(id, { email: 'carol@example.COM' })).toMatchObject({
+			owner: { uid: 'carol' }
+		});
+		expect(await write(id, 'eyJ.carol.sig')).toBe(201);
 	});
 });

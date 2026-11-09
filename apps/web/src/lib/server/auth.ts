@@ -11,23 +11,36 @@ export function hashWriteKey(key: string): string {
 	return createHash('sha256').update(key).digest('hex');
 }
 
-function checkKey(request: Request, project: ProjectRow): void {
-	const match = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '');
-	if (!match) throw new ApiError(401, 'missing write key');
-	const given = Buffer.from(hashWriteKey(match[1]), 'hex');
-	const stored = Buffer.from(project.writeKeyHash, 'hex');
-	if (given.length !== stored.length || !timingSafeEqual(given, stored)) {
-		throw new ApiError(403, 'invalid write key');
-	}
+function bearer(request: Request): string | undefined {
+	return /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('authorization') ?? '')?.[1];
 }
+
+function keyMatches(token: string, project: ProjectRow): boolean {
+	const given = Buffer.from(hashWriteKey(token), 'hex');
+	const stored = Buffer.from(project.writeKeyHash, 'hex');
+	return given.length === stored.length && timingSafeEqual(given, stored);
+}
+
+function checkKey(request: Request, project: ProjectRow): void {
+	const token = bearer(request);
+	if (!token) throw new ApiError(401, 'missing write key');
+	if (!keyMatches(token, project)) throw new ApiError(403, 'invalid write key');
+}
+
+/** A hash no one holds the key for: the Project takes no Write key until one is issued. */
+export const unissuedKeyHash = (): string => hashWriteKey(generateWriteKey());
 
 export async function authorizeProject(request: Request, projectId: string): Promise<ProjectRow> {
 	const project = await getProjectRow(projectId);
 	if (!project) throw new ApiError(404, 'project not found');
 	if (project.ownerUid === null) {
 		checkKey(request, project);
-	} else if ((await requireBearerUser(request)).uid !== project.ownerUid) {
-		throw new ApiError(403, 'token does not own this project');
+	} else {
+		const token = bearer(request);
+		if (token && keyMatches(token, project)) return project;
+		if ((await requireBearerUser(request)).uid !== project.ownerUid) {
+			throw new ApiError(403, 'token does not own this project');
+		}
 	}
 	return project;
 }

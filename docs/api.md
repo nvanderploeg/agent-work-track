@@ -9,7 +9,7 @@ Every package builds against this file. When behaviour and this file disagree, t
 - **Node** — a step or subtask in a task's tree, addressed by a **path** of agent-chosen keys joined by `/` (`chunk-2`, `chunk-2/tests`). Depth 1 = step.
 - **State** — a key from the project config. Each state has a **kind**.
 - **Notice** — an assumption or caveat an agent flags on a task or one of its nodes. Append-only; review marks live in the viewer's browser, never on the server.
-- **Owner** — the Firebase user (`uid`) who owns a Project. A Project without one is **anonymous**: always public, written with its write key.
+- **Owner** — the Firebase user (`uid`) who owns a Project. A Project without one is **anonymous**: always public, written with its write key. An Admin can assign one; the write key then keeps working until the owner rotates or clears it.
 - **Public flag** — on a Project, whether anyone with its URL may read it; on a Task, whether anyone with its URL may read that Task even though its Project is private. Anonymous Projects are always public.
 - **Image** — a JPEG an agent attaches to a task or one of its nodes. The record is stored; the bytes live only in server memory and expire (see § Images).
 
@@ -226,6 +226,8 @@ Project and a write key.
 | GET    | `/api/me/projects`      | —                         | 200 `{ projects: { project, tasks }[] }`, the signed-in user's, newest write first |
 | POST   | `/api/me/projects`      | as `POST /api/projects`   | 201 `{ id, name, url, config }`: an owned, private Project; no write key is issued |
 | PATCH  | `/api/me/projects/:id`  | `{ public: boolean }`     | 200 `{ project }`; 404 unless the caller owns it                             |
+| POST   | `/api/me/projects/:id/write-key` | — | 200 `{ writeKey }`, returned once: replaces the Project's write key; 404 unless the caller owns it |
+| DELETE | `/api/me/projects/:id/write-key` | — | 200 `{ ok: true }`: no write key works afterwards; Owner tokens still do; 404 unless the caller owns it |
 | PATCH  | `/api/me/tasks/:taskId` | `{ public: boolean }`     | 200 `{ task }`; 404 unless the caller owns its Project                       |
 
 The rest of `/api/me/…` needs the session (401 `{ error: 'sign in required' }`). `POST`, `PATCH` and `DELETE` on
@@ -242,7 +244,8 @@ Read rules, for every read route (`GET /api/projects/:id`, `/stream`, `GET /api/
 - Making a Project or Task private ends its open streams with `reset`.
 
 Writes: an anonymous Project takes its write key; an owned Project takes a **Firebase ID token** of
-its owner as `Authorization: Bearer <idToken>` (401 `missing token`, 403 `invalid token` or `token
+its owner, or its write key while it still has one (a Project an Admin assigned an owner keeps its key;
+one created owned never had one), as `Authorization: Bearer <idToken>` (401 `missing token`, 403 `invalid token` or `token
 does not own this project`). The server verifies it with revocation checked. The session cookie
 grants visibility control, not writes. `POST /api/projects` with an ID token makes an owned, private
 Project (no `writeKey` in the reply); an ID token that does not verify is 403, never an anonymous

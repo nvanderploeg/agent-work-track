@@ -324,6 +324,21 @@ export async function setProjectPublic(projectId: string, value: boolean): Promi
 	});
 }
 
+export async function setProjectOwner(projectId: string, uid: string): Promise<Project> {
+	return mutate(projectId, async (ctx) => {
+		const [old] = await ctx.tx.select().from(projects).where(eq(projects.id, projectId));
+		if (old.ownerUid === uid) return toProject(old);
+		await ctx.tx.update(projects).set({ ownerUid: uid }).where(eq(projects.id, projectId));
+		const project = toProject({ ...old, ownerUid: uid });
+		await ctx.emit('project', null, null, project);
+		return project;
+	});
+}
+
+export async function setWriteKeyHash(projectId: string, writeKeyHash: string): Promise<void> {
+	await db.update(projects).set({ writeKeyHash }).where(eq(projects.id, projectId));
+}
+
 export async function setTaskPublic(
 	projectId: string,
 	taskId: string,

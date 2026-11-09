@@ -12,11 +12,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DATABASE_URL } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
 import { db, pool } from '#lib/server/db/index.ts';
-import { events, images, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
+import { events, images, nodes, notices, projects, tasks, users } from '#lib/server/db/schema.ts';
 import { trackRequest } from '#lib/server/inflight.ts';
 import { createProjectStream, endStreams } from '#lib/server/stream.ts';
 import { resetDb } from '#lib/server/test/db.ts';
-import { DELETE as deleteProjectRoute } from '../../../routes/api/admin/projects/[id]/+server.ts';
+import {
+	DELETE as deleteProjectRoute,
+	PATCH as assignOwnerRoute
+} from '../../../routes/api/admin/projects/[id]/+server.ts';
 import { GET as exportRoute } from '../../../routes/api/admin/export/+server.ts';
 import { POST as importRoute } from '../../../routes/api/admin/import/+server.ts';
 import { deletePhrase, deleteProject, listProjects, stats } from './portal.ts';
@@ -502,6 +505,29 @@ describe('portal', () => {
 		expect(listed).toMatchObject({ id: PROJECT, name: 'Round trip', tasks: 1 });
 		expect(listed.bytes).toBeGreaterThan(0);
 		expect(listed.lastActivityAt).toBeTruthy();
+	});
+
+	it('assigns an Owner by email or uid and lists it', async () => {
+		await seed();
+		await db.insert(users).values({ uid: 'u-1', email: 'Ann@Example.com' });
+		const patch = (body: unknown) =>
+			assignOwnerRoute({
+				locals: ADMIN,
+				params: { id: PROJECT },
+				request: new Request('http://x', { method: 'PATCH', body: JSON.stringify(body) })
+			} as never);
+
+		const unknown = await patch({ email: 'nobody@example.com' });
+		expect(unknown.status).toBe(404);
+		expect((await unknown.json()).error).toMatch(/sign in/);
+		expect((await patch({ uid: 'a', email: 'b@c.d' })).status).toBe(400);
+
+		expect((await patch({ email: 'ann@example.com' })).status).toBe(200);
+		expect((await listProjects())[0].owner).toEqual({ uid: 'u-1', email: 'Ann@Example.com' });
+		expect((await patch({ uid: 'u-2' })).status).toBe(200);
+		expect((await listProjects())[0].owner).toEqual({ uid: 'u-2', email: null });
+		const [row] = await db.select().from(projects);
+		expect(row).toMatchObject({ ownerUid: 'u-2', public: true, writeKeyHash: WRITE_KEY_HASH });
 	});
 
 	it('deletes only on the exact typed name, taking its Tasks along', async () => {

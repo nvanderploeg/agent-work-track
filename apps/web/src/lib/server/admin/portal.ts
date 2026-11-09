@@ -1,5 +1,7 @@
 import { ApiError } from '#lib/server/api.ts';
 import { TABLE_PREFIX } from '#lib/server/db/schema.ts';
+import { setProjectOwner } from '#lib/server/store.ts';
+import { parseOwnerTarget } from '#lib/server/validate.ts';
 import { pool } from '#lib/server/db/index.ts';
 import { readJournal } from '#lib/server/admin/bundle.ts';
 import { log } from '#lib/server/log.ts';
@@ -49,8 +51,11 @@ export async function listProjects() {
 		last_write_at: Date;
 		tasks: number;
 		bytes: number;
+		owner_uid: string | null;
+		owner_email: string | null;
+		public: boolean;
 	}>(
-		`SELECT p.id, p.name, p.created_at, p.last_write_at,
+		`SELECT p.id, p.name, p.created_at, p.last_write_at, p.owner_uid, p.public, u.email AS owner_email,
 			COALESCE(t.c, 0) AS tasks,
 			COALESCE(t.b, 0) + COALESCE(n.b, 0) + COALESCE(e.b, 0) AS bytes
 		 FROM chronicle_projects p
@@ -60,6 +65,7 @@ export async function listProjects() {
 			FROM chronicle_nodes n2 JOIN chronicle_tasks t2 ON t2.id = n2.task_id GROUP BY t2.project_id) n ON n.project_id = p.id
 		 LEFT JOIN (SELECT project_id, SUM(octet_length(payload::text)) b
 			FROM chronicle_events GROUP BY project_id) e ON e.project_id = p.id
+		 LEFT JOIN chronicle_users u ON u.uid = p.owner_uid
 		 ORDER BY p.last_write_at DESC`
 	);
 	const iso = (value: unknown) => new Date(value as string).toISOString();
@@ -69,6 +75,7 @@ export async function listProjects() {
 		confirmPhrase: deletePhrase(project.name, project.id),
 		tasks: Number(project.tasks),
 		bytes: Number(project.bytes),
+		owner: project.owner_uid ? { uid: project.owner_uid, email: project.owner_email } : null,
 		createdAt: iso(project.created_at),
 		lastActivityAt: iso(project.last_write_at)
 	}));
@@ -91,4 +98,39 @@ export async function deleteProject(id: string, confirm: unknown) {
 	endStreams(id);
 	log('admin.delete_project', { id });
 	return { deleted: id };
+}
+
+/** Makes `body.uid`, or the signed-in user with `body.email`, the Owner. Visibility and the Write key are untouched. */
+export async function assignOwner(id: string, body: Record<string, unknown>) {
+	const target = parseOwnerTarget(body);
+	const [project] = await rows<{ owner_uid: string | null }>(
+		'SELECT owner_uid FROM chronicle_projects WHERE id = $1',
+		[id]
+	);
+	if (!project) throw new ApiError(404, 'Project not found');
+	let uid: string;
+	let email: string | null = null;
+	if ('uid' in target) {
+		uid = target.uid;
+	} else {
+		const found = await rows<{ uid: string }>(
+			'SELECT uid FROM chronicle_users WHERE lower(email) = $1',
+			[target.email]
+		);
+		if (found.length === 0) {
+			throw new ApiError(
+				404,
+				`no user with email ${target.email}: they must sign in to chronicle first`
+			);
+		}
+		if (found.length > 1) {
+			throw new ApiError(409, `more than one user has email ${target.email}: assign by uid`);
+		}
+		uid = found[0].uid;
+		email = target.email;
+	}
+	const updated = await setProjectOwner(id, uid);
+	if (project.owner_uid !== uid && !updated.public) endStreams(id);
+	log('admin.assign_owner', { id, uid, from: project.owner_uid });
+	return { id, owner: { uid, email }, public: updated.public };
 }

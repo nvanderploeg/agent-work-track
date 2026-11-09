@@ -8,10 +8,10 @@ A live dashboard for agent work: agents report multi-step tasks to a project pag
 A dashboard page. Its UUID is also the public view URL (`/p/<id>`). Holds a Config, Tasks and an event log. Optionally has an Owner.
 
 **Write key**:
-The secret returned once when a Project is created; the server keeps only its sha256. Whoever holds it can write; the public URL alone is read-only.
+The secret returned once when an anonymous Project is created; the server keeps only its sha256. Whoever holds it can write; the public URL alone is read-only. It survives the Project gaining an Owner, who can rotate it or clear it.
 
 **Owner**:
-The Firebase user whose `uid` a Project records. A Project with no Owner is anonymous: always public, written with its Write key as before.
+The Firebase user whose `uid` a Project records. A Project with no Owner is anonymous: always public, written with its Write key. An Admin can assign or reassign the Owner; assigning never changes the Public flag. The Owner's Bearer writes; so does a Write key the Project still holds, until the Owner rotates or clears it.
 
 **Public flag**:
 On a Project, whether anyone with its URL may read it (an owned Project starts private). On a Task, whether anyone with its URL may read that Task though its Project is private. Never a way to write.
@@ -20,7 +20,7 @@ On a Project, whether anyone with its URL may read it (an owned Project starts p
 The `runestone_session` cookie (one name and Domain across sagas, chronicle and beryl) a signed-in browser holds, exchanged from a Firebase ID token and verified on every request. Proves who is reading; grants no writes.
 
 **Tool login**:
-How the MCP server or CLI acts as a user: a device code the signed-in user approves, a Firebase custom token traded for a refresh token kept in the Runestone login file (`~/.config/runestone/login.json`, shared with the other Runestone tools; contract in `docs/client.md`), and Firebase ID tokens sent as the Bearer. Owned Projects are written with that Bearer only; there is no per-app secret.
+How the MCP server or CLI acts as a user: a device code the signed-in user approves, a Firebase custom token traded for a refresh token kept in the Runestone login file (`~/.config/runestone/login.json`, shared with the other Runestone tools; contract in `docs/client.md`), and Firebase ID tokens sent as the Bearer. An Owner Project is written with that Bearer, and with its Write key if it still has one (a Project created owned never had one); there is no per-app secret.
 
 **Task**:
 One multi-step job on a Project, with its own explicit State set by agents. Identified by a server-generated UUID.
@@ -50,7 +50,7 @@ An assumption or caveat an agent flags on a Task, or on one of its Nodes by Path
 A screenshot or other picture an agent attaches to a Task, or to one of its Nodes by Path: a 256 px thumbnail, plus a 512 px view when it is marked for review. The server keeps the bytes in memory only and drops them once the Task has been finished or idle a while; the viewer's browser keeps what it already loaded.
 
 **Admin token**:
-The `ADMIN_TOKEN` secret that opens `/admin`, the portal for stats, deleting Projects, and exporting or importing a Bundle. Unset: the portal does not exist (404). Unrelated to a Write key.
+The `ADMIN_TOKEN` secret that opens `/admin`, the portal for stats, assigning a Project's Owner, deleting Projects, and exporting or importing a Bundle. Unset: the portal does not exist (404). Unrelated to a Write key.
 
 **Bundle**:
 The zip an export produces and an import consumes: `manifest.json` and `db.ndjson`, a consistent logical dump of every Project (with its Owner and Public flag) and its Tasks, Nodes, Notices and Events. Never holds Images. Importing one replaces all data.

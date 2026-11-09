@@ -383,7 +383,8 @@ Set `ADMIN_TOKEN` (`openssl rand -hex 32`) and open `/admin`. Unset, `/admin` an
 | POST   | `/api/admin/login`                             | `{token}`; sets the cookie, returns `{ok, csrf}`                              |
 | POST   | `/api/admin/logout`                            | clears the cookie                                                             |
 | GET    | `/api/admin/stats`                             | version, database name and size, row counts, schema, migrations               |
-| GET    | `/api/admin/projects`                          | Projects with Task count, `bytes` (payload held) and `lastActivityAt`         |
+| GET    | `/api/admin/projects`                          | Projects with Task count, `bytes` (payload held), `lastActivityAt` and `owner` (`{uid, email}` or `null`) |
+| PATCH  | `/api/admin/projects/:id`                      | body `{email}` or `{uid}`: sets the Owner (assign or reassign). An email must belong to a user who has signed in (404 otherwise, 409 if several share it). Visibility and the Write key are untouched. Returns `{id, owner, public}` |
 | DELETE | `/api/admin/projects/:id`                      | body `{confirm: "<Project name> (<first 8 of id>)"}`; cascades              |
 | GET    | `/api/admin/export`                            | streams a Bundle (`application/zip`)                                          |
 | POST   | `/api/admin/import?confirm=replace-everything` | body is the zip; replaces everything; add `&allow-empty=1` to accept a Bundle with no Projects                                          |
