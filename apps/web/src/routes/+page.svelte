@@ -184,7 +184,7 @@ cd chronicle && scripts/install.sh</code
 			<ol class="discovery">
 				<li><code>CHRONICLE_URL</code> <span>when set, only this server is tried</span></li>
 				<li><code>localhost:3280</code> <span>the local docker compose tracker</span></li>
-				<li><code>chronicle.nanzero.com</code> <span>the hosted tracker</span></li>
+				<li><code>chronicle.merc.camp</code> <span>the hosted tracker</span></li>
 			</ol>
 			<p>
 				If none responds, the agent continues untracked. A missing tracker never interrupts the

@@ -572,9 +572,9 @@ describe('doctor', () => {
 			pinned: null,
 			probes: [
 				{ server: 'http://localhost:3280', ok: false },
-				{ server: 'https://chronicle.nanzero.com', ok: true, version: '9.9.9' }
+				{ server: 'https://chronicle.merc.camp', ok: true, version: '9.9.9' }
 			],
-			server: 'https://chronicle.nanzero.com',
+			server: 'https://chronicle.merc.camp',
 			repoKey: '/work/agent-repo/.git',
 			registered: { projectId: 'proj-77', name: 'agent-repo' }
 		});
@@ -584,7 +584,7 @@ describe('doctor', () => {
 		expect(result.code).toBe(0);
 		expect(client.doctor).toHaveBeenCalledWith({ cwd: '/work/agent-repo' });
 		expect(result.stdout).toContain('/home/u/.config/chronicle');
-		expect(result.stdout).toContain('https://chronicle.nanzero.com');
+		expect(result.stdout).toContain('https://chronicle.merc.camp');
 		expect(result.stdout).toContain('http://localhost:3280');
 		expect(result.stdout).toContain('/work/agent-repo/.git');
 		expect(result.stdout).toContain('proj-77');
