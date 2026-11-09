@@ -16,10 +16,12 @@ export const GET: RequestHandler = route(async ({ request, params, url, getClien
 	const projectId = parseId(params.id, 'project');
 	const scoped = url.searchParams.get('task');
 	let taskId: string | undefined;
+	let wholeProject = false;
 	if (scoped !== null) {
 		taskId = parseId(scoped, 'task');
 		const readable = await readableTask(request, taskId);
 		if (readable.project.id !== projectId) throw new ApiError(404, 'task not found');
+		wholeProject = readable.wholeProject;
 	} else {
 		await readableProject(request, projectId);
 	}
@@ -30,6 +32,7 @@ export const GET: RequestHandler = route(async ({ request, params, url, getClien
 	const stream = await createProjectStream(projectId, {
 		since,
 		taskId,
+		wholeProject,
 		uid: viewer?.uid,
 		onClose: (reason) =>
 			log('stream.close', {

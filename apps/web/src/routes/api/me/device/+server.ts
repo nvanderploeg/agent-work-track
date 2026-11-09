@@ -21,6 +21,7 @@ export const GET: RequestHandler = route(async ({ request, url }) => {
 export const POST: RequestHandler = route(async ({ request, url }) => {
 	requireSameOrigin(request, url);
 	const viewer = await requireViewer(request);
+	limitLookup(viewer.uid);
 	const { userCode, approve } = await readBody(request);
 	if (typeof userCode !== 'string' || typeof approve !== 'boolean') {
 		throw new ApiError(400, 'userCode and approve are required');

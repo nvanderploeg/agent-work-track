@@ -8,8 +8,10 @@ export interface StreamOptions {
 	idleMs?: number;
 	heartbeatMs?: number;
 	now?: () => number;
-	/** Only this Task's events, plus Config changes: for a viewer who may read just that Task. */
+	/** Only this Task's events: for a viewer who may read just that Task. */
 	taskId?: string;
+	/** Forward Config changes to a Task-scoped stream; set only for a reader of the whole Project. */
+	wholeProject?: boolean;
 	/** The signed-in reader, so `endUserStreams` can end this stream. */
 	uid?: string;
 	onClose?: (reason: 'idle' | 'client' | 'error') => void;
@@ -101,12 +103,8 @@ export async function createProjectStream(
 	}
 
 	function emit(event: ChronicleEvent): void {
-		if (
-			options.taskId !== undefined &&
-			event.type !== 'config' &&
-			event.taskId !== options.taskId
-		) {
-			return;
+		if (options.taskId !== undefined) {
+			if (event.type === 'config' ? !options.wholeProject : event.taskId !== options.taskId) return;
 		}
 		if (event.seq <= lastSeq) return;
 		lastSeq = event.seq;
