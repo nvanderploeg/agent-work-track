@@ -73,22 +73,22 @@ function toViewer(claims: {
 	};
 }
 
-// Codes that say the token is bad, as opposed to Firebase being unreachable or overloaded.
-const INFRASTRUCTURE_CODES = new Set([
-	'auth/internal-error',
-	'auth/network-error',
-	'auth/quota-exceeded',
-	'auth/too-many-requests',
-	'auth/service-unavailable',
-	'auth/certificate-fetch-failed'
+// Codes that say the token itself is bad; any other failure is Firebase being unreachable or broken.
+const TOKEN_INVALID_CODES = new Set([
+	'auth/id-token-expired',
+	'auth/id-token-revoked',
+	'auth/session-cookie-expired',
+	'auth/session-cookie-revoked',
+	'auth/argument-error',
+	'auth/invalid-id-token',
+	'auth/invalid-session-cookie',
+	'auth/user-disabled'
 ]);
 
 function failVerification(error: unknown): null {
-	const code = (error as { code?: unknown }).code;
-	if (typeof code === 'string' && code.startsWith('auth/') && !INFRASTRUCTURE_CODES.has(code)) {
-		return null;
-	}
-	log('identity.error', { error: (error as Error).message });
+	const code = (error as { code?: unknown } | null)?.code;
+	if (typeof code === 'string' && TOKEN_INVALID_CODES.has(code)) return null;
+	log('identity.error', { error: (error as Error)?.message });
 	throw new ApiError(503, 'sign-in is unavailable; retry shortly');
 }
 
@@ -108,7 +108,12 @@ function cached(key: string): Viewer | undefined {
 	return undefined;
 }
 
-function remember(key: string, viewer: Viewer): void {
+// Bumped by every forget(); a verify that began before its user's last forget() must not cache.
+let epoch = 0;
+const forgotten = new Map<string, number>();
+
+function remember(key: string, viewer: Viewer, startedAt: number): void {
+	if ((forgotten.get(viewer.uid) ?? 0) > startedAt) return;
 	if (verified.size > CACHE_PRUNE_ABOVE) {
 		for (const [k, v] of verified) if (v.until <= Date.now()) verified.delete(k);
 	}
@@ -116,6 +121,7 @@ function remember(key: string, viewer: Viewer): void {
 }
 
 function forget(uid: string): void {
+	forgotten.set(uid, ++epoch);
 	for (const [key, hit] of verified) if (hit.viewer.uid === uid) verified.delete(key);
 }
 
@@ -148,9 +154,10 @@ export async function verifySession(cookie: string): Promise<Viewer | null> {
 	const key = cacheKey('session', cookie);
 	const hit = cached(key);
 	if (hit) return hit;
+	const startedAt = epoch;
 	try {
 		const viewer = toViewer(await getAuth(admin()).verifySessionCookie(cookie, true));
-		remember(key, viewer);
+		remember(key, viewer, startedAt);
 		return viewer;
 	} catch (error) {
 		return failVerification(error);
@@ -169,9 +176,10 @@ export async function verifyBearer(idToken: string): Promise<Viewer | null> {
 	const key = cacheKey('bearer', idToken);
 	const hit = cached(key);
 	if (hit) return hit;
+	const startedAt = epoch;
 	try {
 		const viewer = toViewer(await getAuth(admin()).verifyIdToken(idToken, true));
-		remember(key, viewer);
+		remember(key, viewer, startedAt);
 		return viewer;
 	} catch (error) {
 		return failVerification(error);

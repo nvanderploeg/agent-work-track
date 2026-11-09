@@ -107,6 +107,7 @@ describe('verification failures', () => {
 		'auth/id-token-expired',
 		'auth/id-token-revoked',
 		'auth/argument-error',
+		'auth/invalid-id-token',
 		'auth/user-disabled'
 	])('treat %s as an invalid token', async (code) => {
 		auth.verifyIdToken.mockRejectedValue(failure(code));
@@ -114,16 +115,20 @@ describe('verification failures', () => {
 		expect(await verifyBearer(`invalid-${code}`)).toBeNull();
 	});
 
-	it.each([undefined, 'auth/internal-error', 'auth/quota-exceeded', 'app/network-error'])(
-		'treat %s as an outage, never as an invalid token',
-		async (code) => {
-			auth.verifyIdToken.mockRejectedValue(failure(code));
-			auth.verifySessionCookie.mockRejectedValue(failure(code));
+	it.each([
+		undefined,
+		'auth/internal-error',
+		'auth/quota-exceeded',
+		'app/network-error',
+		'auth/some-future-code',
+		'auth/invalid-credential'
+	])('treat %s as an outage, never as an invalid token', async (code) => {
+		auth.verifyIdToken.mockRejectedValue(failure(code));
+		auth.verifySessionCookie.mockRejectedValue(failure(code));
 
-			await expect(verifyBearer(`outage-${code}`)).rejects.toMatchObject({ status: 503 });
-			await expect(verifySession(`outage-${code}`)).rejects.toMatchObject({ status: 503 });
-		}
-	);
+		await expect(verifyBearer(`outage-${code}`)).rejects.toMatchObject({ status: 503 });
+		await expect(verifySession(`outage-${code}`)).rejects.toMatchObject({ status: 503 });
+	});
 
 	it('are not cached', async () => {
 		auth.verifyIdToken.mockRejectedValueOnce(failure('auth/id-token-revoked'));
@@ -159,6 +164,23 @@ describe('revocation checks', () => {
 		await revokeTools('u11');
 		await verifyBearer('soon-revoked');
 
+		expect(auth.verifyIdToken).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe('revocation racing a verify', () => {
+	it('does not let a verify in flight repopulate the cache after revokeTools', async () => {
+		let finish!: (claims: { uid: string }) => void;
+		auth.verifyIdToken.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+		const pending = verifyBearer('racing-token');
+
+		auth.revokeRefreshTokens.mockResolvedValue(undefined);
+		await revokeTools('u12');
+		finish({ uid: 'u12' });
+		await pending;
+
+		auth.verifyIdToken.mockResolvedValue({ uid: 'u12' });
+		await verifyBearer('racing-token');
 		expect(auth.verifyIdToken).toHaveBeenCalledTimes(2);
 	});
 });
