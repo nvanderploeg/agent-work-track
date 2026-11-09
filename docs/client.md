@@ -5,7 +5,7 @@ Builds on `docs/api.md` (types, HTTP routes, client files, discovery). Nothing h
 ## `@chronicle/client` (`packages/client/src/index.ts`)
 
 ```ts
-export const DEFAULT_CANDIDATES = ['http://localhost:3280', 'https://chronicle.nanzero.com'];
+export const DEFAULT_CANDIDATES = ['http://localhost:3280', 'https://chronicle.merc.camp'];
 export const UNREACHABLE_WARNING = 'chronicle unreachable — continuing untracked';
 
 export interface ClientOptions {

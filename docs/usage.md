@@ -220,7 +220,7 @@ for any other):
 
 1. `CHRONICLE_URL`, when set. This is a pin: only that server is tried, never another.
 2. `http://localhost:3280`, the local tracker.
-3. `https://chronicle.nanzero.com`, the hosted one.
+3. `https://chronicle.merc.camp`, the hosted one.
 
 If none answers, the agent continues untracked. Later writes for a task go to the server in that
 task's handle (`~/.config/chronicle/tasks.json`) without probing again.

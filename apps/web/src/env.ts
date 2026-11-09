@@ -10,7 +10,7 @@ export const variables = defineEnvVars({
 	DATABASE_URL: { description: 'The database connection string.' },
 	ORIGIN: {
 		description:
-			'Public base URL used in links the API returns, e.g. `https://chronicle.nanzero.com`. Unset: the request origin.',
+			'Public base URL used in links the API returns, e.g. `https://chronicle.merc.camp`. Unset: the request origin.',
 		schema: (value) => value?.trim().replace(/\/+$/, '') || undefined
 	},
 	CHRONICLE_IDLE_MS: {

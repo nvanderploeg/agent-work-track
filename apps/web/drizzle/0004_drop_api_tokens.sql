@@ -1,1 +1,1 @@
-DROP TABLE "api_tokens" CASCADE;
+DROP TABLE "chronicle_api_tokens" CASCADE;

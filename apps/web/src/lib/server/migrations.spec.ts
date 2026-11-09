@@ -11,21 +11,21 @@ describe('migrations', () => {
 	it('applies each journal entry once, baseline first', async () => {
 		const tags = await journalTags();
 		expect(tags[0]).toBe('0000_baseline');
-		const applied = await rows(sql`select 1 from drizzle.__drizzle_migrations`);
+		const applied = await rows(sql`select 1 from drizzle.chronicle_migrations`);
 		expect(applied).toHaveLength(tags.length);
 	});
 
 	it('leaves existing Projects anonymous and public, and Tasks private', async () => {
 		const found = await rows<{ table_name: string; column_name: string; column_default: string }>(
 			sql`select table_name, column_name, column_default from information_schema.columns
-				where table_schema = current_schema() and table_name in ('projects', 'tasks')
+				where table_schema = current_schema() and table_name in ('chronicle_projects', 'chronicle_tasks')
 					and column_name in ('owner_uid', 'public')
 				order by table_name, column_name`
 		);
 		expect(found).toEqual([
-			{ table_name: 'projects', column_name: 'owner_uid', column_default: null },
-			{ table_name: 'projects', column_name: 'public', column_default: 'true' },
-			{ table_name: 'tasks', column_name: 'public', column_default: 'false' }
+			{ table_name: 'chronicle_projects', column_name: 'owner_uid', column_default: null },
+			{ table_name: 'chronicle_projects', column_name: 'public', column_default: 'true' },
+			{ table_name: 'chronicle_tasks', column_name: 'public', column_default: 'false' }
 		]);
 	});
 
@@ -41,7 +41,7 @@ describe('migrations', () => {
 	it('stores timestamps with millisecond precision and a zone', async () => {
 		const found = await rows<{ data_type: string; datetime_precision: number }>(
 			sql`select data_type, datetime_precision from information_schema.columns
-				where table_schema = current_schema() and table_name = 'projects' and column_name = 'created_at'`
+				where table_schema = current_schema() and table_name = 'chronicle_projects' and column_name = 'created_at'`
 		);
 		expect(found).toEqual([{ data_type: 'timestamp with time zone', datetime_precision: 3 }]);
 	});

@@ -11,7 +11,8 @@ export default async function setup(): Promise<void> {
 	await client.connect();
 	try {
 		await migrate(drizzle(client), {
-			migrationsFolder: resolve(import.meta.dirname, '../../../../drizzle')
+			migrationsFolder: resolve(import.meta.dirname, '../../../../drizzle'),
+			migrationsTable: 'chronicle_migrations'
 		});
 	} finally {
 		await client.end();

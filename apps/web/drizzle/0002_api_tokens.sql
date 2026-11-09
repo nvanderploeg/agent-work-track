@@ -1,4 +1,4 @@
-CREATE TABLE "api_tokens" (
+CREATE TABLE "chronicle_api_tokens" (
 	"id" varchar(36) PRIMARY KEY NOT NULL,
 	"owner_uid" varchar(128) NOT NULL,
 	"token_hash" char(64) NOT NULL,
@@ -6,16 +6,16 @@ CREATE TABLE "api_tokens" (
 	"created_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	"last_used_at" timestamp (3) with time zone,
 	"revoked_at" timestamp (3) with time zone,
-	CONSTRAINT "api_tokens_token_hash_unique" UNIQUE("token_hash")
+	CONSTRAINT "chronicle_api_tokens_token_hash_unique" UNIQUE("token_hash")
 );
 --> statement-breakpoint
-CREATE TABLE "device_codes" (
+CREATE TABLE "chronicle_device_codes" (
 	"device_hash" char(64) PRIMARY KEY NOT NULL,
 	"user_code" varchar(16) NOT NULL,
 	"label" varchar(100) NOT NULL,
 	"owner_uid" varchar(128),
 	"expires_at" timestamp (3) with time zone NOT NULL,
-	CONSTRAINT "device_codes_user_code_unique" UNIQUE("user_code")
+	CONSTRAINT "chronicle_device_codes_user_code_unique" UNIQUE("user_code")
 );
 --> statement-breakpoint
-CREATE INDEX "api_tokens_owner_idx" ON "api_tokens" USING btree ("owner_uid");
+CREATE INDEX "chronicle_api_tokens_owner_idx" ON "chronicle_api_tokens" USING btree ("owner_uid");

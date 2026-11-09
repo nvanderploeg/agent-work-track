@@ -11,7 +11,7 @@ import Cursor from 'pg-cursor';
 import { ADMIN_BACKUP_DIR, ADMIN_MAX_UNPACKED_MB } from '$app/env/private';
 import { ApiError } from '#lib/server/api.ts';
 import { pool } from '#lib/server/db/index.ts';
-import { events, nodes, notices, projects, tasks } from '#lib/server/db/schema.ts';
+import { events, nodes, notices, projects, tasks, TABLE_PREFIX } from '#lib/server/db/schema.ts';
 import { log } from '#lib/server/log.ts';
 import { drainRequests } from '#lib/server/inflight.ts';
 import { imageCache } from '#lib/server/images.ts';
@@ -116,10 +116,14 @@ async function* dumpDatabase(conn: pg.PoolClient): AsyncGenerator<Buffer> {
 		const names = columns.map((column) => column.name);
 		yield Buffer.from(`${JSON.stringify({ table: name, columns: names })}\n`);
 		const cursor = conn.query(
-			new Cursor(`SELECT ${columns.map(selectExpression).join(', ')} FROM "${name}"`, [], {
-				rowMode: 'array',
-				types: rawTypes
-			})
+			new Cursor(
+				`SELECT ${columns.map(selectExpression).join(', ')} FROM "${TABLE_PREFIX}${name}"`,
+				[],
+				{
+					rowMode: 'array',
+					types: rawTypes
+				}
+			)
 		);
 		let pending = '';
 		for (;;) {
@@ -207,7 +211,7 @@ export async function assertExportable(): Promise<void> {
 	const { rows } = await pool.query<{ bytes: string }>(
 		`SELECT COALESCE(SUM(pg_table_size(to_regclass(quote_ident(t)))), 0) AS bytes
 		 FROM unnest($1::text[]) AS t`,
-		[Object.keys(BUNDLE_TABLES)]
+		[Object.keys(BUNDLE_TABLES).map((name) => TABLE_PREFIX + name)]
 	);
 	if (Number(rows[0].bytes) > ZIP_LIMIT_BYTES) {
 		throw new ApiError(413, 'the database is too large for a single-zip bundle (4 GiB limit)');
@@ -447,8 +451,8 @@ function assertNoNul(
 async function advanceEventSequence(conn: pg.PoolClient): Promise<void> {
 	await conn.query(
 		`SELECT setval(s.name, m.top)
-		 FROM (SELECT pg_get_serial_sequence('events', 'seq') AS name) s,
-			(SELECT MAX(seq) AS top FROM events) m
+		 FROM (SELECT pg_get_serial_sequence('chronicle_events', 'seq') AS name) s,
+			(SELECT MAX(seq) AS top FROM chronicle_events) m
 		 WHERE m.top > (SELECT COALESCE(MAX(last_value), 0) FROM pg_sequences
 			WHERE schemaname || '.' || sequencename = s.name)`
 	);
@@ -491,9 +495,11 @@ export async function importBundle(
 			await conn.query('BEGIN');
 			await conn.query("SET LOCAL TIME ZONE 'UTC'");
 			await conn.query('SET LOCAL statement_timeout = 0');
-			const counted = await conn.query<{ n: string }>('SELECT COUNT(*) AS n FROM "images"');
+			const counted = await conn.query<{ n: string }>(
+				'SELECT COUNT(*) AS n FROM "chronicle_images"'
+			);
 			imagesDropped = Number(counted.rows[0].n);
-			for (const name of WIPE_ORDER) await conn.query(`DELETE FROM "${name}"`);
+			for (const name of WIPE_ORDER) await conn.query(`DELETE FROM "${TABLE_PREFIX}${name}"`);
 
 			let table: ReturnType<typeof openTable> | undefined;
 			const flush = async () => {
@@ -505,7 +511,7 @@ export async function importBundle(
 					.map((_, r) => `(${open.columns.map((_, c) => `$${r * width + c + 1}`).join(', ')})`)
 					.join(', ');
 				await conn.query(
-					`INSERT INTO "${open.name}" (${open.columns.map((c) => `"${c}"`).join(', ')}) VALUES ${placeholders}`,
+					`INSERT INTO "${TABLE_PREFIX}${open.name}" (${open.columns.map((c) => `"${c}"`).join(', ')}) VALUES ${placeholders}`,
 					open.pending.flat()
 				);
 				rows[open.name] += open.pending.length;

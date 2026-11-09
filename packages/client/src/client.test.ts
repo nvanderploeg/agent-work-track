@@ -238,7 +238,7 @@ afterEach(async () => {
 
 describe('exported constants', () => {
 	it('lists the default candidates in probe order', () => {
-		expect(DEFAULT_CANDIDATES).toEqual(['http://localhost:3280', 'https://chronicle.nanzero.com']);
+		expect(DEFAULT_CANDIDATES).toEqual(['http://localhost:3280', 'https://chronicle.merc.camp']);
 	});
 
 	it('uses the exact unreachable warning text', () => {

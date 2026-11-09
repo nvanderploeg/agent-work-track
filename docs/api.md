@@ -317,7 +317,7 @@ Under `$XDG_CONFIG_HOME/chronicle` (default `~/.config/chronicle`), written atom
 - `projects.json` — `{ [server]: { [repoKey]: { projectId, writeKey, name, projectUrl? } } }`. `projectUrl` is the `url` the server returned at creation. `repoKey` = absolute `git rev-parse --path-format=absolute --git-common-dir` of the cwd, or the cwd's realpath outside git. `name` = the project name the server returned or a later rename set.
 - `tasks.json` — `{ [taskId]: { server, projectId, projectUrl? } }`. `projectUrl` is the task `url` minus `/t/<taskId>`.
 
-Discovery: `CHRONICLE_URL` set → only that server, never another. Otherwise probe `http://localhost:3280` then `https://chronicle.nanzero.com` with `GET /api/health` (300 ms timeout for a loopback host, 2 s for any other; needs 2xx and `service === 'chronicle'`), at every task start. Updates go to the server in the task's handle.
+Discovery: `CHRONICLE_URL` set → only that server, never another. Otherwise probe `http://localhost:3280` then `https://chronicle.merc.camp` with `GET /api/health` (300 ms timeout for a loopback host, 2 s for any other; needs 2xx and `service === 'chronicle'`), at every task start. Updates go to the server in the task's handle.
 
 `startTask` sends `repo` (`owner/name` from the `origin` remote) and `branch` (`git symbolic-ref --short HEAD`) of the cwd unless given, and `agent.tool = 'claude-code'` when `CLAUDECODE=1` and no tool was given. It sends `name` on project creation only when the caller passed `project`; a later `project` that differs from the registry entry renames the project once.
 

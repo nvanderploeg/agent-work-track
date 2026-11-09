@@ -1,4 +1,4 @@
-CREATE TABLE "users" (
+CREATE TABLE "chronicle_users" (
 	"uid" varchar(128) PRIMARY KEY NOT NULL,
 	"email" varchar(320),
 	"name" varchar(255),

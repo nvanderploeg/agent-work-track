@@ -647,7 +647,7 @@ describe('hardening', () => {
 
 	it('dumps and restores timestamps as UTC', async () => {
 		await seed();
-		await db.execute(sql`update projects set created_at = '2026-01-02 03:04:05.678'`);
+		await db.execute(sql`update chronicle_projects set created_at = '2026-01-02 03:04:05.678'`);
 		const bundle = await exportTo();
 		expect((await unpack(bundle)).db).toContain('2026-01-02 03:04:05.678');
 
@@ -790,7 +790,7 @@ describe('import of a MySQL-era bundle', () => {
 		const [project] = await db.select().from(projects);
 		expect(project.createdAt.toISOString()).toBe('2026-01-02T03:04:05.678Z');
 		expect(project.config).toEqual({ theme: 'light', states: [{ key: 'q', kind: 'pending' }] });
-		const raw = await db.execute(sql`select config::text as text from projects`);
+		const raw = await db.execute(sql`select config::text as text from chronicle_projects`);
 		expect(raw.rows[0].text).toBe(
 			'{"theme": "light", "states": [{"key": "q", "kind": "pending"}]}'
 		);
@@ -841,7 +841,7 @@ describe('import of a MySQL-era bundle', () => {
 		return row.seq;
 	};
 	const setSequence = (value: number, called: boolean) =>
-		db.execute(sql`select setval('events_seq_seq', ${value}, ${called})`);
+		db.execute(sql`select setval('chronicle_events_seq_seq', ${value}, ${called})`);
 
 	it('continues seq right after the last imported event', async () => {
 		await setSequence(1, false);

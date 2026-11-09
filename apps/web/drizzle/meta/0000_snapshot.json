@@ -4,8 +4,8 @@
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.events": {
-      "name": "events",
+    "public.chronicle_events": {
+      "name": "chronicle_events",
       "schema": "",
       "columns": {
         "seq": {
@@ -53,8 +53,8 @@
         }
       },
       "indexes": {
-        "events_project_seq_idx": {
-          "name": "events_project_seq_idx",
+        "chronicle_events_project_seq_idx": {
+          "name": "chronicle_events_project_seq_idx",
           "columns": [
             {
               "expression": "project_id",
@@ -74,8 +74,8 @@
           "method": "btree",
           "with": {}
         },
-        "events_task_path_seq_idx": {
-          "name": "events_task_path_seq_idx",
+        "chronicle_events_task_path_seq_idx": {
+          "name": "chronicle_events_task_path_seq_idx",
           "columns": [
             {
               "expression": "task_id",
@@ -103,10 +103,10 @@
         }
       },
       "foreignKeys": {
-        "events_project_id_projects_id_fk": {
-          "name": "events_project_id_projects_id_fk",
-          "tableFrom": "events",
-          "tableTo": "projects",
+        "chronicle_events_project_id_chronicle_projects_id_fk": {
+          "name": "chronicle_events_project_id_chronicle_projects_id_fk",
+          "tableFrom": "chronicle_events",
+          "tableTo": "chronicle_projects",
           "columnsFrom": [
             "project_id"
           ],
@@ -123,8 +123,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.images": {
-      "name": "images",
+    "public.chronicle_images": {
+      "name": "chronicle_images",
       "schema": "",
       "columns": {
         "id": {
@@ -178,8 +178,8 @@
         }
       },
       "indexes": {
-        "images_task_created_idx": {
-          "name": "images_task_created_idx",
+        "chronicle_images_task_created_idx": {
+          "name": "chronicle_images_task_created_idx",
           "columns": [
             {
               "expression": "task_id",
@@ -201,10 +201,10 @@
         }
       },
       "foreignKeys": {
-        "images_task_id_tasks_id_fk": {
-          "name": "images_task_id_tasks_id_fk",
-          "tableFrom": "images",
-          "tableTo": "tasks",
+        "chronicle_images_task_id_chronicle_tasks_id_fk": {
+          "name": "chronicle_images_task_id_chronicle_tasks_id_fk",
+          "tableFrom": "chronicle_images",
+          "tableTo": "chronicle_tasks",
           "columnsFrom": [
             "task_id"
           ],
@@ -221,8 +221,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.nodes": {
-      "name": "nodes",
+    "public.chronicle_nodes": {
+      "name": "chronicle_nodes",
       "schema": "",
       "columns": {
         "task_id": {
@@ -321,10 +321,10 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "nodes_task_id_tasks_id_fk": {
-          "name": "nodes_task_id_tasks_id_fk",
-          "tableFrom": "nodes",
-          "tableTo": "tasks",
+        "chronicle_nodes_task_id_chronicle_tasks_id_fk": {
+          "name": "chronicle_nodes_task_id_chronicle_tasks_id_fk",
+          "tableFrom": "chronicle_nodes",
+          "tableTo": "chronicle_tasks",
           "columnsFrom": [
             "task_id"
           ],
@@ -336,8 +336,8 @@
         }
       },
       "compositePrimaryKeys": {
-        "nodes_task_id_path_pk": {
-          "name": "nodes_task_id_path_pk",
+        "chronicle_nodes_task_id_path_pk": {
+          "name": "chronicle_nodes_task_id_path_pk",
           "columns": [
             "task_id",
             "path"
@@ -349,8 +349,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.notices": {
-      "name": "notices",
+    "public.chronicle_notices": {
+      "name": "chronicle_notices",
       "schema": "",
       "columns": {
         "id": {
@@ -392,8 +392,8 @@
         }
       },
       "indexes": {
-        "notices_task_created_idx": {
-          "name": "notices_task_created_idx",
+        "chronicle_notices_task_created_idx": {
+          "name": "chronicle_notices_task_created_idx",
           "columns": [
             {
               "expression": "task_id",
@@ -415,10 +415,10 @@
         }
       },
       "foreignKeys": {
-        "notices_task_id_tasks_id_fk": {
-          "name": "notices_task_id_tasks_id_fk",
-          "tableFrom": "notices",
-          "tableTo": "tasks",
+        "chronicle_notices_task_id_chronicle_tasks_id_fk": {
+          "name": "chronicle_notices_task_id_chronicle_tasks_id_fk",
+          "tableFrom": "chronicle_notices",
+          "tableTo": "chronicle_tasks",
           "columnsFrom": [
             "task_id"
           ],
@@ -435,8 +435,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.projects": {
-      "name": "projects",
+    "public.chronicle_projects": {
+      "name": "chronicle_projects",
       "schema": "",
       "columns": {
         "id": {
@@ -498,8 +498,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.tasks": {
-      "name": "tasks",
+    "public.chronicle_tasks": {
+      "name": "chronicle_tasks",
       "schema": "",
       "columns": {
         "id": {
@@ -597,8 +597,8 @@
         }
       },
       "indexes": {
-        "tasks_project_created_idx": {
-          "name": "tasks_project_created_idx",
+        "chronicle_tasks_project_created_idx": {
+          "name": "chronicle_tasks_project_created_idx",
           "columns": [
             {
               "expression": "project_id",
@@ -620,10 +620,10 @@
         }
       },
       "foreignKeys": {
-        "tasks_project_id_projects_id_fk": {
-          "name": "tasks_project_id_projects_id_fk",
-          "tableFrom": "tasks",
-          "tableTo": "projects",
+        "chronicle_tasks_project_id_chronicle_projects_id_fk": {
+          "name": "chronicle_tasks_project_id_chronicle_projects_id_fk",
+          "tableFrom": "chronicle_tasks",
+          "tableTo": "chronicle_projects",
           "columnsFrom": [
             "project_id"
           ],
